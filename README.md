@@ -4,6 +4,8 @@ Automated message cleanup for Discord servers. Define retention policies per cat
 
 Built for servers with many channels (media automation, homelab, development) where messages pile up across dozens of categories and manual cleanup is impractical.
 
+> **Warning:** PurgeBot permanently deletes Discord messages. Deleted messages **cannot be recovered** — Discord does not have a recycle bin or undo function. Always start with `dryRun: true` (the default) and verify the dry-run output before enabling live deletion. Only channels explicitly listed in your config are processed (allow-list safety), but misconfiguration can still lead to unintended data loss. **Use at your own risk.** The authors are not responsible for any lost messages.
+
 ## Features
 
 - **Hierarchical retention** — channel override > category default > global default
@@ -337,6 +339,12 @@ The Web UI has no authentication — anyone with network access to port 3050 can
 - Use a reverse proxy with authentication if exposing externally
 - The API config endpoint can expose webhook URLs — treat port 3050 as a trusted interface
 - The Discord bot token is passed via environment variable and never exposed through the API
+
+## Disclaimer
+
+This software is provided "as is", without warranty of any kind. PurgeBot permanently deletes Discord messages, which **cannot be recovered**. By using this software, you accept full responsibility for any data loss. Always test with `dryRun: true` before enabling live deletion, and verify your configuration carefully.
+
+See the [MIT License](LICENSE) for full terms.
 
 ## License
 
