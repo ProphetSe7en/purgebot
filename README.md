@@ -251,15 +251,26 @@ The container includes a built-in healthcheck that verifies the bot has run succ
 
 ### Unraid
 
-PurgeBot includes an Unraid Docker template for easy installation:
+PurgeBot includes an Unraid Docker template for easy installation.
 
-1. In the Unraid web UI, go to **Docker > Add Container > Template Repositories**
-2. Add: `https://github.com/ProphetSe7en/purgebot`
-3. Click **Add Container**, select the PurgeBot template
-4. Fill in `DISCORD_TOKEN` and `GUILD_ID`
+**Add the template repository (one-time):**
+
+1. In the Unraid web UI, go to **Docker** tab
+2. Scroll to the bottom and click **Template Repositories**
+3. Add this URL: `https://github.com/ProphetSe7en/purgebot`
+4. Click **Save**
+
+**Install the container:**
+
+1. Click **Add Container**
+2. From the **Template** dropdown, select **purgebot**
+3. Fill in your `DISCORD_TOKEN` and `GUILD_ID` (see [Discord Bot Setup](#1-create-a-discord-bot) above)
+4. Adjust the timezone if needed (default: `America/New_York`)
 5. Click **Apply**
 
-The Web UI is available at `http://your-unraid-ip:3050`. Config is stored in `/mnt/user/appdata/purgebot` by default.
+Unraid will pull the image from GHCR and start the container. The Web UI is available at `http://your-unraid-ip:3050`. Config, logs, and stats are stored in `/mnt/user/appdata/purgebot` by default.
+
+**Updating:** Click the PurgeBot icon in the Docker tab and select **Force Update** to pull the latest image.
 
 ## CLI Commands
 
