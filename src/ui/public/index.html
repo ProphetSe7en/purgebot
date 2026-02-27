@@ -325,11 +325,23 @@
     <div class="space-y-0 divide-y divide-gh-border">
       <div class="flex items-center justify-between py-3 gap-4">
         <div class="shrink-0"><div class="text-sm">Cleanup</div><div class="text-xs text-gh-dim">Cleanup summary embeds after each run</div></div>
-        <input x-model="editConfig.webhooks.cleanup" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." class="flex-1 px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm font-mono focus:border-gh-blue outline-none min-w-0">
+        <div class="flex flex-1 gap-2 min-w-0">
+          <input x-model="editConfig.webhooks.cleanup" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." class="flex-1 px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm font-mono focus:border-gh-blue outline-none min-w-0">
+          <button @click="testWebhook('cleanup')" :disabled="!editConfig.webhooks?.cleanup || webhookTesting === 'cleanup'"
+            class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+            :class="webhookTesting === 'cleanup' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
+            x-text="webhookTesting === 'cleanup' ? 'Sending...' : 'Test'"></button>
+        </div>
       </div>
       <div class="flex items-center justify-between py-3 gap-4">
         <div class="shrink-0"><div class="text-sm">Info</div><div class="text-xs text-gh-dim">Auto-discovery notifications (new channels found)</div></div>
-        <input x-model="editConfig.webhooks.info" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." class="flex-1 px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm font-mono focus:border-gh-blue outline-none min-w-0">
+        <div class="flex flex-1 gap-2 min-w-0">
+          <input x-model="editConfig.webhooks.info" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." class="flex-1 px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm font-mono focus:border-gh-blue outline-none min-w-0">
+          <button @click="testWebhook('info')" :disabled="!editConfig.webhooks?.info || webhookTesting === 'info'"
+            class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+            :class="webhookTesting === 'info' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
+            x-text="webhookTesting === 'info' ? 'Sending...' : 'Test'"></button>
+        </div>
       </div>
     </div>
   </div>
@@ -484,6 +496,7 @@ function app() {
     stats: { lastRun: null, history: [] },
     editConfig: { categories: {}, discord: {}, logging: {}, webhooks: {} },
     configDirty: false,
+    webhookTesting: null,
     openCategories: [],
     syncRunning: false,
     showCategoryList: false,
@@ -571,6 +584,28 @@ function app() {
         }
       } catch (err) {
         this.showToast('Save failed: ' + err.message, 'error');
+      }
+    },
+    async testWebhook(type) {
+      const url = this.editConfig.webhooks?.[type];
+      if (!url) return;
+      this.webhookTesting = type;
+      try {
+        const r = await fetch('/api/config/test-webhook', {
+          method: 'POST',
+          headers: this.apiHeaders(),
+          body: JSON.stringify({ type, url }),
+        });
+        const data = await r.json();
+        if (r.ok) {
+          this.showToast(`Test message sent to ${type} webhook`);
+        } else {
+          this.showToast(data.error || 'Webhook test failed', 'error');
+        }
+      } catch (err) {
+        this.showToast('Webhook test failed: ' + err.message, 'error');
+      } finally {
+        this.webhookTesting = null;
       }
     },
     async runNow() {

@@ -93,6 +93,49 @@ router.patch('/global', (req, res) => {
   }
 });
 
+// POST /api/config/test-webhook — send a test message to a webhook URL
+router.post('/test-webhook', async (req, res) => {
+  try {
+    const { type, url } = req.body;
+    if (!type || !url) {
+      return res.status(400).json({ error: 'Missing type or url' });
+    }
+    if (!['cleanup', 'info'].includes(type)) {
+      return res.status(400).json({ error: 'Type must be "cleanup" or "info"' });
+    }
+    if (!/^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\//.test(url)) {
+      return res.status(400).json({ error: 'URL must be a Discord webhook URL' });
+    }
+
+    const embed = {
+      title: type === 'cleanup' ? 'PurgeBot — Webhook Test' : 'PurgeBot — Info Webhook Test',
+      description: type === 'cleanup'
+        ? 'This is a test message from PurgeBot. Cleanup summaries will appear here after each run.'
+        : 'This is a test message from PurgeBot. Auto-discovery notifications will appear here when new channels are found.',
+      color: type === 'cleanup' ? 0x238636 : 0xf39c12,
+      footer: { text: 'PurgeBot' },
+      timestamp: new Date().toISOString(),
+    };
+
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ embeds: [embed] }),
+    });
+
+    if (r.ok || r.status === 204) {
+      bot.log('INFO', `Test ${type} webhook sent successfully`);
+      res.json({ ok: true });
+    } else {
+      const body = await r.text().catch(() => '');
+      bot.log('WARN', `Test ${type} webhook failed: ${r.status} — ${body}`);
+      res.status(400).json({ error: `Discord returned ${r.status}: ${body || 'Unknown error'}` });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PATCH /api/config/category/:name — update single category
 router.patch('/category/:name', (req, res) => {
   try {
