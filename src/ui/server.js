@@ -1,0 +1,47 @@
+const express = require('express');
+const path = require('path');
+const { log } = require('../bot');
+
+const configRoutes = require('./routes/config');
+const statsRoutes = require('./routes/stats');
+const controlRoutes = require('./routes/control');
+const logsRoutes = require('./routes/logs');
+
+const UI_PORT = parseInt(process.env.UI_PORT || '3050', 10);
+
+function startServer() {
+  const app = express();
+
+  app.use(express.json({ limit: '50kb' }));
+
+  // CSRF protection: require X-Requested-With header on state-changing API calls
+  app.use('/api', (req, res, next) => {
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      if (req.headers['x-requested-with'] !== 'XMLHttpRequest') {
+        return res.status(403).json({ error: 'Missing X-Requested-With header' });
+      }
+    }
+    next();
+  });
+
+  app.use(express.static(path.join(__dirname, 'public')));
+
+  // API routes
+  app.use('/api/config', configRoutes);
+  app.use('/api/stats', statsRoutes);
+  app.use('/api/cleanup', controlRoutes);
+  app.use('/api/logs', logsRoutes);
+
+  // SPA fallback
+  app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  });
+
+  const server = app.listen(UI_PORT, () => {
+    log('INFO', `Web UI available at http://0.0.0.0:${UI_PORT}`);
+  });
+
+  return server;
+}
+
+module.exports = { startServer };

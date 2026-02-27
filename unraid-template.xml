@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>purgebot</Name>
+  <Repository>ghcr.io/prophetse7en/purgebot:latest</Repository>
+  <Registry>https://github.com/ProphetSe7en/purgebot/pkgs/container/purgebot</Registry>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Latest stable release</TagDescription>
+  </Branch>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/ProphetSe7en/purgebot/issues</Support>
+  <Project>https://github.com/ProphetSe7en/purgebot</Project>
+  <Overview>Automated Discord message cleanup with retention policies, Web UI, and auto-discovery. Define per-category and per-channel retention rules, and PurgeBot handles the rest on a schedule or on-demand. Built-in Web UI for managing categories, editing retention, triggering runs, and viewing real-time logs.</Overview>
+  <Category>Tools: Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:3050]</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/ProphetSe7en/purgebot/main/unraid-template.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/ProphetSe7en/purgebot/main/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Discord bot token and server (guild) ID. See project page for setup instructions.</Requires>
+  <Config Name="WebUI" Target="3050" Default="3050" Mode="tcp" Description="Web UI port" Type="Port" Display="always" Required="true" Mask="false">3050</Config>
+  <Config Name="Config Path" Target="/config" Default="/mnt/user/appdata/purgebot" Mode="rw" Description="Config, logs, and stats storage" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/purgebot</Config>
+  <Config Name="Discord Token" Target="DISCORD_TOKEN" Default="" Description="Bot token from Discord Developer Portal" Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Guild ID" Target="GUILD_ID" Default="" Description="Discord server (guild) ID" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Timezone" Target="TZ" Default="America/New_York" Description="Container timezone (used for cron scheduling)" Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Description="User ID for file ownership" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Description="Group ID for file ownership" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="UMASK" Target="UMASK" Default="002" Description="File creation mask" Type="Variable" Display="advanced" Required="false" Mask="false">002</Config>
+</Container>

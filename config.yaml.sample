@@ -1,0 +1,78 @@
+# PurgeBot — Configuration
+#
+# Retention hierarchy (first match wins):
+#   1. Inline override on channel  — per-channel retention
+#   2. default                     — category-wide default
+#   3. globalDefault               — fallback for categories without a default
+#
+# Retention values:
+#   -1   = Never delete (keep all messages forever)
+#    0   = Delete all messages (bulk <14d + individual >14d, capped per run)
+#    N   = Keep messages newer than N days, delete older ones
+#
+# Discord limits bulk delete to messages <14 days old. Older messages are
+# deleted individually, capped at maxOldDeletesPerChannel per channel per run.
+# Pinned messages are always skipped when skipPinned is true (default).
+#
+# Categories must have "enabled: true" to be cleaned.
+# _channels is auto-populated by --sync. Add ": <days>" to override a channel.
+# Config is re-read before each cleanup run — no restart needed after editing.
+# Schedule and timezone changes via the Web UI take effect immediately.
+#
+# Example:
+#   my-category:
+#     enabled: true
+#     default: 7                    # all channels: 7 days
+#     _channels:
+#       - general                   # uses category default (7 days)
+#       - error-channel: 14         # override: 14 days
+#       - noisy-channel: 3          # override: 3 days
+#       - important-log: -1         # override: never delete
+#
+# Commands:
+#   docker exec purgebot node src/bot.js --sync   # discover channels
+#   docker exec purgebot node src/bot.js --now    # run cleanup now
+
+# Cron expression for when cleanup runs (default: daily at 02:00)
+schedule: "0 2 * * *"
+
+# Timezone used for the cron schedule
+timezone: "Europe/Oslo"
+
+# Fallback retention (days) for categories that don't set their own default
+globalDefault: 7
+
+# When true, logs what would be deleted without actually deleting anything.
+# Always start with dryRun: true and verify the output before setting to false.
+dryRun: true
+
+webhooks:
+  # Discord webhook URL for cleanup summary embeds (one embed per category)
+  cleanup: ""
+
+  # Discord webhook URL for auto-discovery notifications (new channels/categories found)
+  # Sent when scheduled cleanup detects changes on your server — not on first sync
+  info: ""
+
+discord:
+  # Max messages to scan per channel per run (older messages beyond this are not checked)
+  maxMessagesPerChannel: 500
+
+  # Max individual deletes for messages older than 14 days per channel per run.
+  # Discord only allows bulk delete for messages <14 days old.
+  # Messages older than 14 days are deleted one by one, capped at this limit.
+  maxOldDeletesPerChannel: 50
+
+  # Delay in ms between processing each channel (rate limit protection)
+  delayBetweenChannels: 2000
+
+  # Skip pinned messages — pinned messages are never deleted when true
+  skipPinned: true
+
+logging:
+  # Number of days to keep log files in /config/logs/ (auto-rotated at startup)
+  maxDays: 30
+
+# Run --sync to discover your Discord categories and channels.
+# They will appear here with enabled: false — activate the ones you want cleaned.
+categories: {}

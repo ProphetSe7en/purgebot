@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PurgeBot</title>
+<script src="vendor/tailwind.js"></script>
+<script defer src="vendor/alpine-collapse.js"></script>
+<script defer src="vendor/alpine.js"></script>
+<script src="vendor/cronstrue.js"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          gh: {
+            bg: '#0d1117', card: '#161b22', border: '#21262d',
+            border2: '#30363d', text: '#e1e4e8', muted: '#8b949e',
+            dim: '#484f58', blue: '#58a6ff', green: '#3fb950',
+            red: '#f85149', yellow: '#d29922', purple: '#bc8cff',
+          }
+        }
+      }
+    }
+  }
+</script>
+<style>
+  [x-cloak] { display: none !important; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  .log-mono { font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; }
+  @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .pulse-dot { animation: pulse-dot 2s infinite; }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { background: #0d1117; }
+  ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+</style>
+</head>
+<body class="bg-gh-bg text-gh-text min-h-screen" x-data="app()" x-init="init()">
+
+<!-- Header -->
+<header class="bg-gh-card border-b border-gh-border px-6 py-4 flex items-center justify-between flex-wrap gap-3">
+  <div class="flex items-center gap-3">
+    <h1 class="text-xl font-semibold">PurgeBot</h1>
+    <span class="text-xs text-gh-dim" x-text="status.guildName || 'Connecting...'"></span>
+  </div>
+  <div class="flex items-center gap-3">
+    <!-- Connection status -->
+    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border"
+      :class="status.connected
+        ? 'bg-green-900/30 text-gh-green border-green-800'
+        : 'bg-red-900/30 text-gh-red border-red-800'">
+      <span class="w-2 h-2 rounded-full" :class="status.connected ? 'bg-gh-green pulse-dot' : 'bg-gh-red'"></span>
+      <span x-text="status.connected ? 'Connected' : 'Disconnected'"></span>
+    </span>
+    <!-- Dry run badge -->
+    <span x-show="status.dryRun" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-900/30 text-gh-yellow border border-yellow-800">
+      <span class="w-2 h-2 rounded-full bg-gh-yellow"></span> Dry Run
+    </span>
+    <!-- Running badge -->
+    <span x-show="status.cleanupRunning" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-900/30 text-gh-blue border border-blue-800">
+      <span class="w-2 h-2 rounded-full bg-gh-blue pulse-dot"></span> Running
+    </span>
+  </div>
+</header>
+
+<!-- Tabs + Action buttons -->
+<nav class="flex items-center gap-0 px-6 bg-gh-bg border-b border-gh-border">
+  <template x-for="t in tabs" :key="t.id">
+    <button @click="tab = t.id" class="px-5 py-2.5 text-sm font-medium border-b-2 transition flex items-center gap-1.5"
+      :class="tab === t.id ? 'text-gh-text border-gh-blue' : 'text-gh-muted border-transparent hover:text-gh-text'">
+      <span x-text="t.label"></span>
+      <span x-show="t.badge" x-text="t.badge" class="bg-gh-border2 text-gh-muted text-[10px] px-1.5 py-0.5 rounded-full"></span>
+    </button>
+  </template>
+  <div class="ml-auto flex items-center gap-2 py-1.5">
+    <button @click="syncChannels()" :disabled="status.cleanupRunning || syncRunning" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-border text-gh-text text-xs hover:border-gh-blue transition disabled:opacity-50 disabled:cursor-not-allowed">
+      <span x-show="!syncRunning">Sync Channels</span>
+      <span x-show="syncRunning">Syncing...</span>
+    </button>
+    <button @click="runNow()" :disabled="status.cleanupRunning || syncRunning" class="px-3 py-1.5 rounded-md bg-blue-600 border border-blue-600 text-white text-xs hover:bg-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed">Run Now</button>
+  </div>
+</nav>
+
+<!-- Global unsaved changes banner -->
+<div x-show="configDirty" x-cloak class="px-6 pt-4">
+  <div class="flex items-center justify-between bg-yellow-900/20 border border-yellow-800 rounded-lg px-4 py-2">
+    <span class="text-sm text-gh-yellow">You have unsaved changes</span>
+    <div class="flex gap-2">
+      <button @click="loadConfig()" class="text-xs px-3 py-1 rounded border border-gh-border2 bg-gh-border text-gh-text hover:border-gh-blue">Discard</button>
+      <button @click="saveConfig()" class="text-xs px-3 py-1 rounded bg-green-600 border border-green-600 text-white hover:bg-green-500">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== OVERVIEW TAB ===== -->
+<div x-show="tab === 'overview'" x-cloak class="p-6">
+  <!-- Stat cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+    <div @click="showCategoryList = !showCategoryList" class="bg-gh-card border border-gh-border rounded-lg p-4 cursor-pointer hover:border-gh-blue transition">
+      <div class="text-[11px] text-gh-muted uppercase tracking-wider flex items-center justify-between">
+        Categories
+        <svg class="w-3 h-3 text-gh-dim transition-transform" :class="showCategoryList && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+      </div>
+      <div class="text-3xl font-semibold text-gh-blue mt-1" x-text="status.totalCategories || 0"></div>
+      <div class="text-[11px] text-gh-dim mt-0.5" x-text="(status.enabledCategories || 0) + ' enabled, ' + ((status.totalCategories || 0) - (status.enabledCategories || 0)) + ' disabled'"></div>
+    </div>
+    <div class="bg-gh-card border border-gh-border rounded-lg p-4">
+      <div class="text-[11px] text-gh-muted uppercase tracking-wider">Last Run Deleted</div>
+      <div class="text-3xl font-semibold text-gh-green mt-1" x-text="stats.lastRun ? stats.lastRun.totalPurged.toLocaleString() : '—'"></div>
+      <div class="text-[11px] text-gh-dim mt-0.5" x-text="stats.lastRun ? (stats.lastRun.dryRun ? 'Dry run' : 'Live run') + ' · ' + formatDuration(stats.lastRun.duration) : 'No runs yet'"></div>
+    </div>
+    <div class="bg-gh-card border border-gh-border rounded-lg p-4">
+      <div class="text-[11px] text-gh-muted uppercase tracking-wider">Errors</div>
+      <div class="text-3xl font-semibold mt-1" :class="(stats.lastRun?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-green'" x-text="stats.lastRun ? stats.lastRun.totalErrors : '—'"></div>
+      <div class="text-[11px] text-gh-dim mt-0.5">Last run</div>
+    </div>
+    <div class="bg-gh-card border border-gh-border rounded-lg p-4">
+      <div class="text-[11px] text-gh-muted uppercase tracking-wider">Next Cleanup</div>
+      <div class="text-xl font-semibold text-gh-yellow mt-1" x-text="nextRunDisplay"></div>
+      <div class="text-[11px] text-gh-dim mt-0.5" x-text="status.schedule + ' (' + status.timezone + ')'"></div>
+    </div>
+  </div>
+
+  <!-- Category Manager -->
+  <div x-show="showCategoryList" x-collapse class="mb-5">
+    <template x-for="[catName, cat] in Object.entries(editConfig.categories || {}).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
+      <div class="bg-gh-card border border-gh-border rounded-lg mb-2 overflow-hidden">
+        <!-- Category header -->
+        <div @click="toggleCategory(catName)" class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gh-bg/50 transition">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full" :class="cat.enabled ? 'bg-gh-green' : 'bg-gh-dim'"></span>
+            <span class="text-sm font-medium" x-text="catName"></span>
+            <span class="text-xs text-gh-dim" x-text="(cat._channels || []).length + ' ch'"></span>
+          </div>
+          <div class="flex items-center gap-3 text-xs text-gh-muted">
+            <span>Default: <strong x-text="retentionLabel(cat.default ?? editConfig.globalDefault)"></strong></span>
+            <span x-text="countOverrides(cat) + ' override' + (countOverrides(cat) !== 1 ? 's' : '')"></span>
+            <span :class="cat.enabled ? 'text-gh-green' : 'text-gh-dim'" x-text="cat.enabled ? 'Enabled' : 'Disabled'"></span>
+            <button x-show="cat.enabled" @click.stop="runCategory(catName)" :disabled="status.cleanupRunning || syncRunning"
+              class="px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-blue hover:border-gh-blue transition disabled:opacity-50 disabled:cursor-not-allowed"
+              x-text="status.dryRun ? 'Dry Run' : 'Run'"></button>
+            <svg class="w-4 h-4 transition-transform" :class="openCategories.includes(catName) && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </div>
+        </div>
+        <!-- Category body -->
+        <div x-show="openCategories.includes(catName)" x-collapse class="border-t border-gh-border px-4 pb-3">
+          <!-- Category controls -->
+          <div class="flex items-center gap-4 py-3 border-b border-gh-border">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gh-muted">Enabled:</span>
+              <button @click="cat.enabled = !cat.enabled; configDirty = true"
+                class="w-8 h-4 rounded-full relative transition-colors"
+                :class="cat.enabled ? 'bg-blue-600' : 'bg-gh-border2'">
+                <span class="absolute w-3 h-3 bg-white rounded-full top-0.5 transition-all"
+                  :class="cat.enabled ? 'left-[18px]' : 'left-0.5'"></span>
+              </button>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gh-muted">Default retention:</span>
+              <input type="number" :value="cat.default ?? ''" @input="setCategoryDefault(catName, $event.target.value)" class="px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs w-14 text-center focus:border-gh-blue outline-none" min="-1" placeholder="global">
+              <span class="text-xs text-gh-dim">days</span>
+            </div>
+          </div>
+          <!-- Channel list -->
+          <template x-for="(ch, idx) in (cat._channels || [])" :key="idx">
+            <div class="flex items-center justify-between py-1.5 text-sm">
+              <span class="text-gh-muted flex items-center gap-1">
+                <span class="text-gh-dim">#</span>
+                <span x-text="channelName(ch)"></span>
+              </span>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-1.5 py-0.5 rounded"
+                  :class="channelRetentionClass(ch, cat)">
+                  <span x-text="channelRetentionLabel(ch, cat)"></span>
+                </span>
+                <input type="number" :value="channelOverride(ch)" @input="setChannelOverride(catName, idx, $event.target.value)"
+                  class="px-1.5 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs w-12 text-center focus:border-gh-blue outline-none"
+                  min="-1" placeholder="—">
+                <button x-show="cat.enabled && channelEffectiveRetention(ch, cat) !== -1" @click.stop="runChannel(catName, channelName(ch))" :disabled="status.cleanupRunning || syncRunning"
+                  class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-blue hover:border-gh-blue transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  x-text="status.dryRun ? 'Dry Run' : 'Run'"></button>
+              </div>
+            </div>
+          </template>
+          <div x-show="!cat._channels || cat._channels.length === 0" class="text-xs text-gh-dim py-2">No channels — run Sync first</div>
+          <!-- Running indicator -->
+          <div x-show="categoryRunning[catName]" class="mt-3 pt-3 border-t border-gh-border text-xs text-gh-blue flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-gh-blue pulse-dot"></span> Running...
+          </div>
+          <!-- Run results -->
+          <template x-if="categoryResults[catName]">
+            <div class="mt-3 pt-3 border-t border-gh-border">
+              <div class="flex flex-wrap gap-4 mb-2 text-xs">
+                <span class="text-gh-muted">Channels: <strong class="text-gh-blue" x-text="categoryResults[catName].processed"></strong></span>
+                <span class="text-gh-muted"><span x-text="categoryResults[catName].dryRun ? 'Would delete' : 'Deleted'"></span>: <strong class="text-gh-red" x-text="categoryResults[catName].purged"></strong></span>
+                <span class="text-gh-muted">Errors: <strong :class="categoryResults[catName].errors > 0 ? 'text-gh-red' : 'text-gh-green'" x-text="categoryResults[catName].errors"></strong></span>
+                <span class="text-gh-dim" x-text="categoryResults[catName].dryRun ? 'dry-run' : 'live'"></span>
+              </div>
+              <template x-for="ch in categoryResults[catName].channels" :key="ch.name">
+                <div class="flex items-center justify-between py-1 text-xs border-b border-gh-bg last:border-b-0">
+                  <span class="text-gh-muted"><span class="text-gh-dim">#</span><span x-text="ch.name"></span></span>
+                  <span class="font-semibold"
+                    :class="ch.skipped ? 'text-gh-dim' : (ch.purged > 0 ? 'text-gh-red' : 'text-gh-green')"
+                    x-text="ch.skipped ? 'skipped (never delete)' : (ch.purged > 0 ? ch.purged + ' messages' : '0 (all within retention)')"></span>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- Two columns -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <!-- Top channels -->
+    <div class="bg-gh-card border border-gh-border rounded-lg p-4">
+      <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-3">Top Channels (Last Run)</h3>
+      <template x-if="stats.lastRun">
+        <div>
+          <template x-for="ch in topChannels" :key="ch.category + '/' + ch.name">
+            <div class="flex justify-between items-center py-1.5 border-b border-gh-border last:border-b-0 text-sm">
+              <div>
+                <span class="text-gh-text" x-text="'#' + ch.name"></span>
+                <span class="text-gh-dim text-xs ml-1" x-text="ch.category"></span>
+              </div>
+              <span class="text-gh-blue font-semibold text-sm" x-text="ch.purged + ' deleted'"></span>
+            </div>
+          </template>
+          <div x-show="topChannels.length === 0" class="text-sm text-gh-dim">No messages deleted</div>
+        </div>
+      </template>
+      <div x-show="!stats.lastRun" class="text-sm text-gh-dim">No stats yet — run a cleanup first</div>
+    </div>
+
+    <!-- Run history -->
+    <div class="bg-gh-card border border-gh-border rounded-lg p-4">
+      <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-3">Run History</h3>
+      <template x-for="run in (stats.history || []).slice(0, 8)" :key="run.timestamp">
+        <div class="flex justify-between items-center py-1.5 border-b border-gh-border last:border-b-0 text-sm">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full" :class="run.errors > 0 ? 'bg-gh-red' : (run.dryRun ? 'bg-gh-blue' : 'bg-gh-green')"></span>
+            <span class="text-gh-text text-xs" x-text="formatDate(run.timestamp)"></span>
+          </div>
+          <div class="flex items-center gap-3 text-xs">
+            <span class="text-gh-muted" x-text="run.dryRun ? 'dry-run' : 'live'"></span>
+            <span class="font-semibold" :class="run.purged > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="run.purged + ' purged'"></span>
+          </div>
+        </div>
+      </template>
+      <div x-show="!stats.history || stats.history.length === 0" class="text-sm text-gh-dim">No history yet</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== CONFIGURATION TAB ===== -->
+<div x-show="tab === 'config'" x-cloak class="p-6">
+  <!-- Global Settings -->
+  <div class="bg-gh-card border border-gh-border rounded-lg p-5">
+    <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-3">Global Settings</h3>
+    <div class="space-y-0 divide-y divide-gh-border">
+      <div class="flex items-center justify-between py-3">
+        <div><div class="text-sm">Schedule</div><div class="text-xs text-gh-dim">Cron expression for cleanup runs</div></div>
+        <input x-model="editConfig.schedule" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-48 text-right font-mono focus:border-gh-blue outline-none">
+      </div>
+      <div class="flex items-center justify-between py-3">
+        <div><div class="text-sm">Timezone</div><div class="text-xs text-gh-dim">For cron scheduling</div></div>
+        <input x-model="editConfig.timezone" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-48 text-right focus:border-gh-blue outline-none">
+      </div>
+      <div class="flex items-center justify-between py-3">
+        <div><div class="text-sm">Global Default Retention</div><div class="text-xs text-gh-dim">Default days for categories without a default</div></div>
+        <div class="flex items-center gap-2">
+          <input type="number" x-model.number="editConfig.globalDefault" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="-1">
+          <span class="text-xs text-gh-dim">days</span>
+        </div>
+      </div>
+      <div class="flex items-center justify-between py-3">
+        <div><div class="text-sm">Dry Run</div><div class="text-xs text-gh-dim">Log what would be deleted without deleting</div></div>
+        <button @click="editConfig.dryRun = !editConfig.dryRun; configDirty = true"
+          class="w-10 h-5 rounded-full relative transition-colors"
+          :class="editConfig.dryRun ? 'bg-blue-600' : 'bg-gh-border2'">
+          <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+            :class="editConfig.dryRun ? 'left-5' : 'left-0.5'"></span>
+        </button>
+      </div>
+      <div class="flex items-center justify-between py-3">
+        <div><div class="text-sm">Skip Pinned Messages</div><div class="text-xs text-gh-dim">Never delete pinned messages</div></div>
+        <button @click="editConfig.discord.skipPinned = !editConfig.discord.skipPinned; configDirty = true"
+          class="w-10 h-5 rounded-full relative transition-colors"
+          :class="editConfig.discord.skipPinned ? 'bg-blue-600' : 'bg-gh-border2'">
+          <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+            :class="editConfig.discord.skipPinned ? 'left-5' : 'left-0.5'"></span>
+        </button>
+      </div>
+      <div class="flex items-center justify-between py-3">
+        <div><div class="text-sm">Max Messages Per Channel</div><div class="text-xs text-gh-dim">Maximum messages to scan per channel per run</div></div>
+        <input type="number" x-model.number="editConfig.discord.maxMessagesPerChannel" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="1">
+      </div>
+      <div class="flex items-center justify-between py-3">
+        <div><div class="text-sm">Max Old Deletes Per Channel</div><div class="text-xs text-gh-dim">Cap for >14d individual deletes per channel</div></div>
+        <input type="number" x-model.number="editConfig.discord.maxOldDeletesPerChannel" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="0">
+      </div>
+      <div class="flex items-center justify-between py-3">
+        <div><div class="text-sm">Delay Between Channels</div><div class="text-xs text-gh-dim">Rate limit protection (milliseconds)</div></div>
+        <div class="flex items-center gap-2">
+          <input type="number" x-model.number="editConfig.discord.delayBetweenChannels" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-24 text-right focus:border-gh-blue outline-none" min="0">
+          <span class="text-xs text-gh-dim">ms</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ===== SCHEDULE TAB ===== -->
+<div x-show="tab === 'schedule'" x-cloak class="p-6">
+  <div class="bg-gh-card border border-gh-border rounded-lg p-5 mb-4">
+    <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-3">Schedule</h3>
+    <div class="flex items-center gap-4 flex-wrap">
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-gh-muted">Cron:</span>
+        <input x-model="scheduleEdit.schedule" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-blue text-sm font-mono w-40 focus:border-gh-blue outline-none">
+      </div>
+      <span class="text-gh-dim">&rarr;</span>
+      <span class="text-sm text-gh-muted" x-text="scheduleHumanPreview"></span>
+      <div class="flex items-center gap-2 ml-4">
+        <span class="text-xs text-gh-muted">Timezone:</span>
+        <input x-model="scheduleEdit.timezone" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-36 focus:border-gh-blue outline-none">
+      </div>
+      <button x-show="scheduleEdit.schedule !== status.schedule || scheduleEdit.timezone !== status.timezone"
+        @click="saveSchedule()"
+        class="px-3 py-1.5 rounded-md bg-green-600 text-white text-xs hover:bg-green-500 transition ml-2">Save</button>
+    </div>
+  </div>
+
+  <div class="bg-gh-card border border-gh-border rounded-lg p-5">
+    <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-3">Enabled Categories</h3>
+    <div class="space-y-1">
+      <template x-for="[catName, cat] in Object.entries(editConfig.categories || {}).filter(([,c]) => c.enabled).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
+        <div class="flex items-center gap-3 py-1.5 border-b border-gh-border last:border-b-0">
+          <span class="text-sm font-medium text-gh-text min-w-[120px]" x-text="catName"></span>
+          <div class="flex-1 h-6 rounded bg-blue-900/30 border border-blue-800/50 flex items-center px-3 text-xs text-gh-blue">
+            <span x-text="(cat._channels || []).length + ' channels · default: ' + retentionLabel(cat.default ?? editConfig.globalDefault)"></span>
+          </div>
+        </div>
+      </template>
+    </div>
+    <div class="mt-3 text-xs text-gh-dim" x-text="'Total: ' + status.totalChannels + ' channels across ' + status.enabledCategories + ' categories · Delay: ' + (editConfig.discord?.delayBetweenChannels || 2000) + 'ms between channels'"></div>
+  </div>
+</div>
+
+<!-- ===== LOGS TAB ===== -->
+<div x-show="tab === 'logs'" x-cloak class="p-6">
+  <!-- Toolbar -->
+  <div class="flex items-center gap-2 mb-3 flex-wrap">
+    <template x-for="lvl in ['All', 'INFO', 'WARN', 'ERROR']" :key="lvl">
+      <button @click="logFilter = lvl" class="px-3 py-1 rounded-md border text-xs font-medium transition"
+        :class="logFilter === lvl ? 'bg-blue-600 border-blue-600 text-white' : 'border-gh-border2 bg-gh-border text-gh-text hover:border-gh-blue'">
+        <span x-text="lvl"></span>
+      </button>
+    </template>
+    <input type="text" x-model="logSearch" placeholder="Search logs..." class="flex-1 max-w-[250px] px-3 py-1 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-xs outline-none focus:border-gh-blue">
+    <select x-model="logDate" @change="loadLogs()" class="px-2 py-1 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-xs outline-none">
+      <option value="">Today</option>
+      <template x-for="f in logFiles" :key="f">
+        <option :value="f.replace('purgebot-','').replace('.log','')" x-text="f.replace('purgebot-','').replace('.log','')"></option>
+      </template>
+    </select>
+    <div class="flex items-center gap-1.5 ml-auto text-xs" :class="sseConnected ? 'text-gh-green' : 'text-gh-dim'">
+      <span class="w-1.5 h-1.5 rounded-full" :class="sseConnected ? 'bg-gh-green pulse-dot' : 'bg-gh-dim'"></span>
+      <span x-text="sseConnected ? 'Live' : 'Disconnected'"></span>
+    </div>
+  </div>
+
+  <!-- Log container -->
+  <div x-ref="logContainer" class="bg-gh-bg border border-gh-border rounded-lg p-3 log-mono text-xs leading-relaxed max-h-[500px] overflow-y-auto">
+    <template x-for="(line, i) in filteredLogs" :key="i">
+      <div class="flex gap-2 py-px">
+        <template x-if="line.timestamp">
+          <span class="text-gh-dim min-w-[170px] shrink-0" x-text="'[' + line.timestamp + ']'"></span>
+        </template>
+        <template x-if="line.level">
+          <span class="min-w-[50px] shrink-0 font-semibold"
+            :class="{'text-gh-blue': line.level === 'INFO', 'text-gh-yellow': line.level === 'WARN', 'text-gh-red': line.level === 'ERROR'}"
+            x-text="line.level"></span>
+        </template>
+        <span class="text-gh-text" x-text="line.message || line"></span>
+      </div>
+    </template>
+    <div x-show="filteredLogs.length === 0" class="text-gh-dim py-4 text-center">No log entries</div>
+  </div>
+</div>
+
+<!-- ===== TEST TAB ===== -->
+<div x-show="tab === 'test'" x-cloak class="p-6">
+  <!-- Controls -->
+  <div class="flex items-center gap-3 mb-4">
+    <select x-model="testCategory" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm outline-none">
+      <option value="">All Categories</option>
+      <template x-for="catName in Object.keys(editConfig.categories || {}).filter(c => editConfig.categories[c].enabled).sort()" :key="catName">
+        <option :value="catName" x-text="catName"></option>
+      </template>
+    </select>
+    <button @click="runDryTest()" :disabled="status.cleanupRunning || testRunning" class="px-4 py-1.5 rounded-md bg-blue-600 text-white text-sm hover:bg-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed">
+      <span x-show="!testRunning">Run Dry-Run Test</span>
+      <span x-show="testRunning">Running...</span>
+    </button>
+    <span x-show="testLastRun" class="text-xs text-gh-dim" x-text="'Last test: ' + testLastRun"></span>
+  </div>
+
+  <!-- Test summary -->
+  <div x-show="testResults" class="bg-gh-card border border-gh-border rounded-lg p-4 mb-4 flex flex-wrap gap-6">
+    <div><div class="text-xs text-gh-muted">Channels Scanned</div><div class="text-lg font-semibold text-gh-blue mt-0.5" x-text="testResults?.totalProcessed || 0"></div></div>
+    <div><div class="text-xs text-gh-muted">Would Delete</div><div class="text-lg font-semibold text-gh-red mt-0.5" x-text="testResults?.totalPurged || 0"></div></div>
+    <div><div class="text-xs text-gh-muted">Errors</div><div class="text-lg font-semibold mt-0.5" :class="(testResults?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="testResults?.totalErrors || 0"></div></div>
+    <div><div class="text-xs text-gh-muted">Duration</div><div class="text-lg font-semibold text-gh-yellow mt-0.5" x-text="formatDuration(testResults?.duration)"></div></div>
+  </div>
+
+  <!-- Test results per category -->
+  <template x-for="[catName, catData] in Object.entries(testResults?.categories || {}).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
+    <div class="bg-gh-card border border-gh-border rounded-lg p-4 mb-2">
+      <div class="text-sm font-semibold mb-2 flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-gh-green"></span>
+        <span x-text="catName"></span>
+        <span class="text-xs font-normal" :class="catData.purged > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="catData.purged > 0 ? catData.purged + ' to delete' : 'nothing to delete'"></span>
+      </div>
+      <template x-for="ch in catData.channels" :key="ch.name">
+        <div class="flex items-center justify-between py-1 text-xs border-b border-gh-bg last:border-b-0">
+          <span class="text-gh-muted"><span class="text-gh-dim">#</span><span x-text="ch.name"></span></span>
+          <span class="font-semibold"
+            :class="ch.skipped ? 'text-gh-dim' : (ch.purged > 0 ? 'text-gh-red' : 'text-gh-green')"
+            x-text="ch.skipped ? 'skipped (never delete)' : (ch.purged > 0 ? ch.purged + ' messages' : '0 (all within retention)')"></span>
+        </div>
+      </template>
+    </div>
+  </template>
+
+  <div x-show="!testResults" class="text-sm text-gh-dim text-center py-8">Click "Run Dry-Run Test" to see what would be cleaned up</div>
+</div>
+
+<!-- Toast notifications -->
+<div x-show="toast" x-transition class="fixed bottom-6 right-6 px-4 py-2 rounded-lg text-sm font-medium shadow-lg z-50"
+  :class="toastType === 'error' ? 'bg-red-900 text-gh-red border border-red-800' : 'bg-green-900 text-gh-green border border-green-800'"
+  x-text="toast"></div>
+
+<script>
+function app() {
+  return {
+    tab: 'overview',
+    tabs: [
+      { id: 'overview', label: 'Overview' },
+      { id: 'config', label: 'Configuration' },
+      { id: 'schedule', label: 'Schedule' },
+      { id: 'logs', label: 'Logs', badge: 'Live' },
+      { id: 'test', label: 'Test' },
+    ],
+
+    // State
+    status: { connected: false, dryRun: false, schedule: '0 2 * * *', timezone: 'Europe/Oslo', totalCategories: 0, enabledCategories: 0, totalChannels: 0 },
+    stats: { lastRun: null, history: [] },
+    editConfig: { categories: {}, discord: {}, logging: {} },
+    configDirty: false,
+    openCategories: [],
+    syncRunning: false,
+    showCategoryList: false,
+    categoryRunning: {},
+    categoryResults: {},
+    scheduleEdit: { schedule: '', timezone: '' },
+
+    // Logs
+    logLines: [],
+    logFilter: 'All',
+    logSearch: '',
+    logDate: '',
+    logFiles: [],
+    sseSource: null,
+    sseConnected: false,
+
+    // Test
+    testCategory: '',
+    testResults: null,
+    testRunning: false,
+    testLastRun: '',
+
+    // Toast
+    toast: '',
+    toastType: 'success',
+    toastTimer: null,
+
+    async init() {
+      await Promise.all([this.loadStatus(), this.loadStats(), this.loadConfig()]);
+      this.scheduleEdit = { schedule: this.status.schedule || '0 2 * * *', timezone: this.status.timezone || 'Europe/Oslo' };
+      this.connectSSE();
+      this.loadLogs();
+      // Poll status every 10s
+      setInterval(() => this.loadStatus(), 10000);
+      // Poll stats every 30s
+      setInterval(() => this.loadStats(), 30000);
+    },
+
+    // --- API helpers ---
+    // CSRF header required for state-changing requests
+    apiHeaders() {
+      return { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+    },
+
+    // --- API calls ---
+    async loadStatus() {
+      try {
+        const r = await fetch('/api/stats/status');
+        if (r.ok) this.status = await r.json();
+      } catch {}
+    },
+    async loadStats() {
+      try {
+        const r = await fetch('/api/stats');
+        if (r.ok) this.stats = await r.json();
+      } catch {}
+    },
+    async loadConfig() {
+      try {
+        const r = await fetch('/api/config');
+        if (r.ok) {
+          this.editConfig = await r.json();
+          this.configDirty = false;
+        }
+      } catch {}
+    },
+    async saveConfig() {
+      try {
+        const r = await fetch('/api/config', {
+          method: 'PUT',
+          headers: this.apiHeaders(),
+          body: JSON.stringify(this.editConfig),
+        });
+        if (r.ok) {
+          this.configDirty = false;
+          this.showToast('Configuration saved');
+          await this.loadStatus();
+        } else {
+          const data = await r.json();
+          this.showToast(data.error || 'Save failed', 'error');
+        }
+      } catch (err) {
+        this.showToast('Save failed: ' + err.message, 'error');
+      }
+    },
+    async runNow() {
+      try {
+        const r = await fetch('/api/cleanup/run', { method: 'POST', headers: this.apiHeaders() });
+        const data = await r.json();
+        if (r.ok) {
+          this.showToast('Cleanup started');
+          this.tab = 'logs';
+        } else {
+          this.showToast(data.error || 'Failed', 'error');
+        }
+      } catch (err) {
+        this.showToast('Failed: ' + err.message, 'error');
+      }
+    },
+    async syncChannels() {
+      this.syncRunning = true;
+      try {
+        const r = await fetch('/api/cleanup/sync', { method: 'POST', headers: this.apiHeaders() });
+        const data = await r.json();
+        if (r.ok) {
+          const msg = data.changes > 0
+            ? `Sync complete: ${data.categories} categories, ${data.channels} channels (${data.changes} changes)`
+            : `Sync complete: ${data.categories} categories, ${data.channels} channels — no changes`;
+          this.showToast(msg);
+          await this.loadConfig();
+          await this.loadStatus();
+        } else {
+          this.showToast(data.error || 'Sync failed', 'error');
+        }
+      } catch (err) {
+        this.showToast('Sync failed: ' + err.message, 'error');
+      } finally {
+        this.syncRunning = false;
+      }
+    },
+    async runCategory(catName) {
+      try {
+        const endpoint = this.status.dryRun ? '/api/cleanup/dryrun' : '/api/cleanup/run';
+        const r = await fetch(endpoint, {
+          method: 'POST',
+          headers: this.apiHeaders(),
+          body: JSON.stringify({ category: catName }),
+        });
+        const data = await r.json();
+        if (r.ok) {
+          // Clear previous results, set running
+          const cleared = { ...this.categoryResults }; delete cleared[catName]; this.categoryResults = cleared;
+          this.categoryRunning = { ...this.categoryRunning, [catName]: true };
+          if (!this.openCategories.includes(catName)) this.openCategories.push(catName);
+          this.showToast(`${this.status.dryRun ? 'Dry-run' : 'Cleanup'} started for ${catName}`);
+          this.pollRunResult(catName);
+        } else {
+          this.showToast(data.error || 'Failed', 'error');
+        }
+      } catch (err) {
+        this.showToast('Failed: ' + err.message, 'error');
+      }
+    },
+    async runChannel(catName, chName) {
+      try {
+        const endpoint = this.status.dryRun ? '/api/cleanup/dryrun' : '/api/cleanup/run';
+        const r = await fetch(endpoint, {
+          method: 'POST',
+          headers: this.apiHeaders(),
+          body: JSON.stringify({ category: catName, channel: chName }),
+        });
+        const data = await r.json();
+        if (r.ok) {
+          const cleared = { ...this.categoryResults }; delete cleared[catName]; this.categoryResults = cleared;
+          this.categoryRunning = { ...this.categoryRunning, [catName]: true };
+          if (!this.openCategories.includes(catName)) this.openCategories.push(catName);
+          this.showToast(`${this.status.dryRun ? 'Dry-run' : 'Cleanup'} started for #${chName}`);
+          this.pollRunResult(catName);
+        } else {
+          this.showToast(data.error || 'Failed', 'error');
+        }
+      } catch (err) {
+        this.showToast('Failed: ' + err.message, 'error');
+      }
+    },
+    pollRunResult(catName) {
+      let pollCount = 0;
+      const poll = setInterval(async () => {
+        if (++pollCount > 150) {
+          clearInterval(poll);
+          const updated = { ...this.categoryRunning }; delete updated[catName]; this.categoryRunning = updated;
+          this.showToast('Run timed out', 'error');
+          return;
+        }
+        await this.loadStatus();
+        if (!this.status.cleanupRunning) {
+          clearInterval(poll);
+          await this.loadStats();
+          if (this.stats.lastRun?.categories?.[catName]) {
+            this.categoryResults = { ...this.categoryResults, [catName]: {
+              ...this.stats.lastRun.categories[catName],
+              dryRun: this.stats.lastRun.dryRun,
+              duration: this.stats.lastRun.duration,
+            }};
+          }
+          const updated = { ...this.categoryRunning }; delete updated[catName]; this.categoryRunning = updated;
+        }
+      }, 2000);
+    },
+    async saveSchedule() {
+      try {
+        const r = await fetch('/api/config/global', {
+          method: 'PATCH',
+          headers: this.apiHeaders(),
+          body: JSON.stringify({ schedule: this.scheduleEdit.schedule, timezone: this.scheduleEdit.timezone }),
+        });
+        if (r.ok) {
+          this.showToast('Schedule saved');
+          await this.loadStatus();
+          // Also sync editConfig so Configuration tab stays consistent
+          this.editConfig.schedule = this.scheduleEdit.schedule;
+          this.editConfig.timezone = this.scheduleEdit.timezone;
+        } else {
+          const data = await r.json();
+          this.showToast(data.error || 'Save failed', 'error');
+        }
+      } catch (err) {
+        this.showToast('Save failed: ' + err.message, 'error');
+      }
+    },
+    async runDryTest() {
+      this.testRunning = true;
+      try {
+        const body = this.testCategory ? { category: this.testCategory } : {};
+        const r = await fetch('/api/cleanup/dryrun', {
+          method: 'POST',
+          headers: this.apiHeaders(),
+          body: JSON.stringify(body),
+        });
+        if (r.ok) {
+          this.showToast('Dry-run started — watch Logs tab');
+          let pollCount = 0;
+          const poll = setInterval(async () => {
+            if (++pollCount > 150) { // 150 * 2s = 5 min timeout
+              clearInterval(poll);
+              this.testRunning = false;
+              this.showToast('Dry-run timed out', 'error');
+              return;
+            }
+            await this.loadStatus();
+            if (!this.status.cleanupRunning) {
+              clearInterval(poll);
+              await this.loadStats();
+              // Verify the last run was actually a dry-run (not a cron-triggered live run)
+              if (this.stats.lastRun?.dryRun) {
+                this.testResults = this.stats.lastRun;
+              }
+              this.testRunning = false;
+              this.testLastRun = new Date().toLocaleTimeString();
+            }
+          }, 2000);
+        } else {
+          const data = await r.json();
+          this.showToast(data.error || 'Failed', 'error');
+          this.testRunning = false;
+        }
+      } catch (err) {
+        this.showToast('Failed: ' + err.message, 'error');
+        this.testRunning = false;
+      }
+    },
+
+    // --- Logs ---
+    async loadLogs() {
+      try {
+        const params = new URLSearchParams();
+        if (this.logDate) params.set('date', this.logDate);
+        params.set('limit', '500');
+        const r = await fetch('/api/logs?' + params);
+        if (r.ok) {
+          const data = await r.json();
+          this.logFiles = data.files || [];
+          // Parse log lines into objects
+          this.logLines = data.lines.map(line => this.parseLogLine(line));
+        }
+      } catch {}
+    },
+    connectSSE() {
+      this.sseSource = new EventSource('/api/logs/stream');
+      this.sseSource.onopen = () => { this.sseConnected = true; };
+      this.sseSource.onerror = () => { this.sseConnected = false; };
+      this.sseSource.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === 'connected') return;
+          this.logLines.push(data);
+          // Keep max 1000 lines
+          if (this.logLines.length > 1000) this.logLines.splice(0, this.logLines.length - 1000);
+          // Auto-scroll
+          this.$nextTick(() => {
+            const c = this.$refs.logContainer;
+            if (c) c.scrollTop = c.scrollHeight;
+          });
+        } catch {}
+      };
+    },
+    parseLogLine(line) {
+      const m = line.match(/^\[(.+?)\]\s+\[(\w+)\]\s+(.*)$/);
+      if (m) return { timestamp: m[1], level: m[2], message: m[3] };
+      return { message: line };
+    },
+    get filteredLogs() {
+      return this.logLines.filter(l => {
+        if (this.logFilter !== 'All' && l.level !== this.logFilter) return false;
+        if (this.logSearch && !(l.message || '').toLowerCase().includes(this.logSearch.toLowerCase())) return false;
+        return true;
+      });
+    },
+
+    // --- Config helpers ---
+    toggleCategory(name) {
+      const idx = this.openCategories.indexOf(name);
+      if (idx >= 0) this.openCategories.splice(idx, 1);
+      else this.openCategories.push(name);
+    },
+    channelName(ch) {
+      if (typeof ch === 'string') return ch;
+      if (typeof ch === 'object' && ch !== null) return Object.keys(ch)[0];
+      return '';
+    },
+    channelOverride(ch) {
+      if (typeof ch === 'object' && ch !== null) return Object.values(ch)[0];
+      return '';
+    },
+    setChannelOverride(catName, idx, value) {
+      const cat = this.editConfig.categories[catName];
+      if (!cat || !cat._channels) return;
+      const ch = cat._channels[idx];
+      const name = this.channelName(ch);
+      if (value === '' || value === null || value === undefined) {
+        // Remove override — make it a plain string
+        cat._channels[idx] = name;
+      } else {
+        cat._channels[idx] = { [name]: parseInt(value) };
+      }
+      this.configDirty = true;
+    },
+    setCategoryDefault(catName, value) {
+      const cat = this.editConfig.categories[catName];
+      if (!cat) return;
+      if (value === '' || value === null || value === undefined) {
+        delete cat.default;
+      } else {
+        cat.default = parseInt(value);
+      }
+      this.configDirty = true;
+    },
+    countOverrides(cat) {
+      if (!cat._channels || !Array.isArray(cat._channels)) return 0;
+      return cat._channels.filter(ch => typeof ch === 'object' && ch !== null).length;
+    },
+    channelRetentionLabel(ch, cat) {
+      if (typeof ch === 'object' && ch !== null) {
+        const val = Object.values(ch)[0];
+        return this.retentionLabel(val) + ' (override)';
+      }
+      const def = cat.default ?? this.editConfig.globalDefault;
+      return this.retentionLabel(def) + ' (default)';
+    },
+    channelRetentionClass(ch, cat) {
+      if (typeof ch === 'object' && ch !== null) {
+        const val = Object.values(ch)[0];
+        if (val === -1) return 'bg-green-900/30 text-gh-green border border-green-800';
+        return 'bg-blue-900/30 text-gh-blue border border-blue-800';
+      }
+      return 'bg-gh-border text-gh-muted';
+    },
+    channelEffectiveRetention(ch, cat) {
+      if (typeof ch === 'object' && ch !== null) return Object.values(ch)[0];
+      return cat.default ?? this.editConfig.globalDefault;
+    },
+    retentionLabel(days) {
+      if (days === -1) return 'never';
+      if (days === 0) return 'all';
+      return days + 'd';
+    },
+
+    // --- Computed ---
+    get topChannels() {
+      if (!this.stats.lastRun?.categories) return [];
+      const all = [];
+      for (const [catName, catData] of Object.entries(this.stats.lastRun.categories)) {
+        for (const ch of catData.channels || []) {
+          if (ch.purged > 0) all.push({ ...ch, category: catName });
+        }
+      }
+      return all.sort((a, b) => b.purged - a.purged).slice(0, 5);
+    },
+    get nextRunDisplay() {
+      try {
+        const desc = cronstrue.toString(this.status.schedule || '0 2 * * *');
+        // Extract time from description
+        const timeMatch = desc.match(/at (\d{2}:\d{2})/);
+        return timeMatch ? timeMatch[1] : desc;
+      } catch { return '—'; }
+    },
+    get cronHuman() {
+      try {
+        return cronstrue.toString(this.status.schedule || '0 2 * * *') + ' (' + (this.status.timezone || 'UTC') + ')';
+      } catch { return 'Invalid cron expression'; }
+    },
+    get scheduleHumanPreview() {
+      try {
+        return cronstrue.toString(this.scheduleEdit.schedule || '0 2 * * *') + ' (' + (this.scheduleEdit.timezone || 'UTC') + ')';
+      } catch { return 'Invalid cron expression'; }
+    },
+
+    // --- Utilities ---
+    formatDuration(ms) {
+      if (!ms) return '—';
+      if (ms < 1000) return ms + 'ms';
+      const s = Math.round(ms / 1000);
+      if (s < 60) return s + 's';
+      return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+    },
+    formatDate(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    },
+    showToast(msg, type = 'success') {
+      this.toast = msg;
+      this.toastType = type;
+      clearTimeout(this.toastTimer);
+      this.toastTimer = setTimeout(() => { this.toast = ''; }, 3000);
+    },
+  };
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "purgebot",
+  "version": "1.0.0",
+  "description": "Automated Discord message cleanup with retention policies, Web UI, and auto-discovery",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node src/bot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "express": "^4.21.0",
+    "js-yaml": "^4.1.0",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
