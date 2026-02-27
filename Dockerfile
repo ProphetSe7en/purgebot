@@ -12,7 +12,8 @@ RUN mkdir -p src/ui/public/vendor && \
     wget -q -O src/ui/public/vendor/tailwind.js "https://cdn.tailwindcss.com/3.4.17" && \
     wget -q -O src/ui/public/vendor/alpine-collapse.js "https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.14.9/dist/cdn.min.js" && \
     wget -q -O src/ui/public/vendor/alpine.js "https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js" && \
-    wget -q -O src/ui/public/vendor/cronstrue.js "https://cdn.jsdelivr.net/npm/cronstrue@2.50.0/dist/cronstrue.min.js"
+    wget -q -O src/ui/public/vendor/cronstrue.js "https://cdn.jsdelivr.net/npm/cronstrue@2.50.0/dist/cronstrue.min.js" && \
+    wget -q -O src/ui/public/vendor/chart.js "https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"
 
 COPY src/ ./src/
 COPY config.yaml.sample ./config.yaml.sample

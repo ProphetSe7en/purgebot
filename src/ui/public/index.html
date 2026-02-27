@@ -8,6 +8,7 @@
 <script defer src="vendor/alpine-collapse.js"></script>
 <script defer src="vendor/alpine.js"></script>
 <script src="vendor/cronstrue.js"></script>
+<script src="vendor/chart.js"></script>
 <script>
   tailwind.config = {
     theme: {
@@ -73,13 +74,6 @@
       <span x-show="t.badge" x-text="t.badge" class="bg-gh-border2 text-gh-muted text-[10px] px-1.5 py-0.5 rounded-full"></span>
     </button>
   </template>
-  <div class="ml-auto flex items-center gap-2 py-1.5">
-    <button @click="syncChannels()" :disabled="status.cleanupRunning || syncRunning" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-border text-gh-text text-xs hover:border-gh-blue transition disabled:opacity-50 disabled:cursor-not-allowed">
-      <span x-show="!syncRunning">Sync Channels</span>
-      <span x-show="syncRunning">Syncing...</span>
-    </button>
-    <button @click="runNow()" :disabled="status.cleanupRunning || syncRunning" class="px-3 py-1.5 rounded-md bg-blue-600 border border-blue-600 text-white text-xs hover:bg-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed">Run Now</button>
-  </div>
 </nav>
 
 <!-- Global unsaved changes banner -->
@@ -107,13 +101,13 @@
     </div>
     <div class="bg-gh-card border border-gh-border rounded-lg p-4">
       <div class="text-[11px] text-gh-muted uppercase tracking-wider">Last Run Deleted</div>
-      <div class="text-3xl font-semibold text-gh-green mt-1" x-text="stats.lastRun ? stats.lastRun.totalPurged.toLocaleString() : '—'"></div>
-      <div class="text-[11px] text-gh-dim mt-0.5" x-text="stats.lastRun ? (stats.lastRun.dryRun ? 'Dry run' : 'Live run') + ' · ' + formatDuration(stats.lastRun.duration) : 'No runs yet'"></div>
+      <div class="text-3xl font-semibold text-gh-green mt-1" x-text="stats.lastLiveRun ? stats.lastLiveRun.totalPurged.toLocaleString() : '—'"></div>
+      <div class="text-[11px] text-gh-dim mt-0.5" x-text="stats.lastLiveRun ? 'Live run · ' + formatDuration(stats.lastLiveRun.duration) : 'No live runs yet'"></div>
     </div>
     <div class="bg-gh-card border border-gh-border rounded-lg p-4">
       <div class="text-[11px] text-gh-muted uppercase tracking-wider">Errors</div>
-      <div class="text-3xl font-semibold mt-1" :class="(stats.lastRun?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-green'" x-text="stats.lastRun ? stats.lastRun.totalErrors : '—'"></div>
-      <div class="text-[11px] text-gh-dim mt-0.5">Last run</div>
+      <div class="text-3xl font-semibold mt-1" :class="(stats.lastLiveRun?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-green'" x-text="stats.lastLiveRun ? stats.lastLiveRun.totalErrors : '—'"></div>
+      <div class="text-[11px] text-gh-dim mt-0.5" x-text="stats.lastLiveRun ? 'Last live run' : 'No live runs yet'"></div>
     </div>
     <div class="bg-gh-card border border-gh-border rounded-lg p-4">
       <div class="text-[11px] text-gh-muted uppercase tracking-wider">Next Cleanup</div>
@@ -160,6 +154,15 @@
               <span class="text-xs text-gh-muted">Default retention:</span>
               <input type="number" :value="cat.default ?? ''" @input="setCategoryDefault(catName, $event.target.value)" class="px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs w-14 text-center focus:border-gh-blue outline-none" min="-1" placeholder="global">
               <span class="text-xs text-gh-dim">days</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gh-muted">Delete old (&gt;14d):</span>
+              <button @click="cat.deleteOld = cat.deleteOld === false ? true : false; configDirty = true"
+                class="w-8 h-4 rounded-full relative transition-colors"
+                :class="cat.deleteOld !== false ? 'bg-blue-600' : 'bg-gh-border2'">
+                <span class="absolute w-3 h-3 bg-white rounded-full top-0.5 transition-all"
+                  :class="cat.deleteOld !== false ? 'left-[18px]' : 'left-0.5'"></span>
+              </button>
             </div>
           </div>
           <!-- Channel list -->
@@ -269,7 +272,7 @@
         <input x-model="editConfig.timezone" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-48 text-right focus:border-gh-blue outline-none">
       </div>
       <div class="flex items-center justify-between py-3">
-        <div><div class="text-sm">Global Default Retention</div><div class="text-xs text-gh-dim">Default days for categories without a default</div></div>
+        <div><div class="text-sm">Global Default Retention</div><div class="text-xs text-gh-dim">Delete messages older than this many days. Use -1 to never delete, 0 to delete all</div></div>
         <div class="flex items-center gap-2">
           <input type="number" x-model.number="editConfig.globalDefault" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="-1">
           <span class="text-xs text-gh-dim">days</span>
@@ -294,15 +297,15 @@
         </button>
       </div>
       <div class="flex items-center justify-between py-3">
-        <div><div class="text-sm">Max Messages Per Channel</div><div class="text-xs text-gh-dim">Maximum messages to scan per channel per run</div></div>
+        <div><div class="text-sm">Max Messages Per Channel</div><div class="text-xs text-gh-dim">How many messages to scan per channel each run — older messages beyond this limit won't be checked</div></div>
         <input type="number" x-model.number="editConfig.discord.maxMessagesPerChannel" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="1">
       </div>
       <div class="flex items-center justify-between py-3">
-        <div><div class="text-sm">Max Old Deletes Per Channel</div><div class="text-xs text-gh-dim">Cap for >14d individual deletes per channel</div></div>
+        <div><div class="text-sm">Max Old Deletes Per Channel</div><div class="text-xs text-gh-dim">Messages older than 14 days are deleted individually (slow). Set to 0 to only bulk-delete recent messages</div></div>
         <input type="number" x-model.number="editConfig.discord.maxOldDeletesPerChannel" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="0">
       </div>
       <div class="flex items-center justify-between py-3">
-        <div><div class="text-sm">Delay Between Channels</div><div class="text-xs text-gh-dim">Rate limit protection (milliseconds)</div></div>
+        <div><div class="text-sm">Delay Between Channels</div><div class="text-xs text-gh-dim">Pause between processing each channel to avoid Discord rate limits</div></div>
         <div class="flex items-center gap-2">
           <input type="number" x-model.number="editConfig.discord.delayBetweenChannels" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-24 text-right focus:border-gh-blue outline-none" min="0">
           <span class="text-xs text-gh-dim">ms</span>
@@ -427,51 +430,201 @@
   </div>
 </div>
 
-<!-- ===== TEST TAB ===== -->
-<div x-show="tab === 'test'" x-cloak class="p-6">
+<!-- ===== STATISTICS TAB ===== -->
+<div x-show="tab === 'statistics'" x-cloak class="p-6">
+
+  <!-- Empty state -->
+  <div x-show="!stats.history || stats.history.length === 0" class="text-center py-16">
+    <div class="text-gh-dim text-sm">No cleanup data yet — run a cleanup to see statistics</div>
+  </div>
+
+  <div x-show="stats.history && stats.history.length > 0">
+    <!-- Summary Cards -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+        <div class="bg-gh-card border border-gh-border rounded-lg p-4">
+          <div class="text-[11px] text-gh-muted uppercase tracking-wider">Total Deleted</div>
+          <div class="text-2xl font-semibold mt-1 text-gh-text" x-text="(stats.lifetime?.totalPurged || 0).toLocaleString()"></div>
+          <div class="text-xs text-gh-dim mt-1" x-text="stats.lifetime?.firstRun ? 'since ' + new Date(stats.lifetime.firstRun).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'}) : 'no live runs yet'"></div>
+        </div>
+        <div class="bg-gh-card border border-gh-border rounded-lg p-4">
+          <div class="text-[11px] text-gh-muted uppercase tracking-wider">Avg Per Run</div>
+          <div class="text-2xl font-semibold mt-1 text-gh-text" x-text="stats.lifetime?.totalRuns ? Math.round(stats.lifetime.totalPurged / stats.lifetime.totalRuns).toLocaleString() : '—'"></div>
+          <div class="text-xs text-gh-dim mt-1" x-text="stats.lifetime?.totalRuns ? 'across ' + stats.lifetime.totalRuns + ' runs' : 'no live runs yet'"></div>
+        </div>
+        <div class="bg-gh-card border border-gh-border rounded-lg p-4">
+          <div class="text-[11px] text-gh-muted uppercase tracking-wider">Highest Run</div>
+          <div class="text-2xl font-semibold mt-1 text-gh-text" x-text="statsHighestRun.purged ? statsHighestRun.purged.toLocaleString() : '—'"></div>
+          <div class="text-xs text-gh-dim mt-1" x-text="statsHighestRun.date || 'no live runs yet'"></div>
+        </div>
+        <div class="bg-gh-card border border-gh-border rounded-lg p-4">
+          <div class="text-[11px] text-gh-muted uppercase tracking-wider">Error Rate</div>
+          <div class="text-2xl font-semibold mt-1" :class="statsErrorRate > 1 ? 'text-gh-red' : 'text-gh-green'" x-text="stats.lifetime?.totalRuns ? statsErrorRate.toFixed(2) : '—'"></div>
+          <div class="text-xs text-gh-dim mt-1">errors per run</div>
+        </div>
+      </div>
+
+      <!-- Messages Deleted Over Time -->
+      <div class="bg-gh-card border border-gh-border rounded-lg p-5 mb-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider">Messages Deleted Over Time</h3>
+          <span class="text-[10px] text-gh-dim">Dry-run excluded</span>
+        </div>
+        <div style="height: 280px;">
+          <canvas id="timelineChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Shared toggle for breakdown row -->
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider">Breakdown</h3>
+        <div class="flex rounded-md border border-gh-border2 overflow-hidden">
+          <button @click="statsView = 'lastRun'; updateBreakdownCharts()"
+            class="px-3 py-1 text-xs transition"
+            :class="statsView === 'lastRun' ? 'bg-gh-border2 text-gh-text' : 'bg-gh-card text-gh-dim hover:text-gh-muted'">
+            Last Run
+          </button>
+          <button @click="statsView = 'allTime'; updateBreakdownCharts()"
+            class="px-3 py-1 text-xs transition border-l border-gh-border2"
+            :class="statsView === 'allTime' ? 'bg-gh-border2 text-gh-text' : 'bg-gh-card text-gh-dim hover:text-gh-muted'">
+            All Time
+          </button>
+        </div>
+      </div>
+
+      <!-- Two equal columns -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div class="bg-gh-card border border-gh-border rounded-lg p-5">
+          <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-4">Category Breakdown</h3>
+          <div style="height: 280px;" class="flex items-center justify-center relative">
+            <canvas id="categoryChart"></canvas>
+            <div x-show="statsBreakdownEmpty" class="absolute inset-0 flex items-center justify-center text-sm text-gh-dim">No deletion data for this view</div>
+          </div>
+        </div>
+        <div class="bg-gh-card border border-gh-border rounded-lg p-5">
+          <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-4">Top Channels</h3>
+          <div style="height: 280px;" class="relative">
+            <canvas id="topChannelsChart"></canvas>
+            <div x-show="statsBreakdownEmpty" class="absolute inset-0 flex items-center justify-center text-sm text-gh-dim">No deletion data for this view</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<!-- ===== CLEANUP TAB ===== -->
+<div x-show="tab === 'cleanup'" x-cloak class="p-6">
   <!-- Controls -->
-  <div class="flex items-center gap-3 mb-4">
-    <select x-model="testCategory" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm outline-none">
+  <div class="flex items-center gap-3 mb-4 flex-wrap">
+    <select x-model="cleanupCategory" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm outline-none">
       <option value="">All Categories</option>
       <template x-for="catName in Object.keys(editConfig.categories || {}).filter(c => editConfig.categories[c].enabled).sort()" :key="catName">
         <option :value="catName" x-text="catName"></option>
       </template>
     </select>
-    <button @click="runDryTest()" :disabled="status.cleanupRunning || testRunning" class="px-4 py-1.5 rounded-md bg-blue-600 text-white text-sm hover:bg-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed">
-      <span x-show="!testRunning">Run Dry-Run Test</span>
-      <span x-show="testRunning">Running...</span>
+    <!-- Mode toggle -->
+    <div class="flex rounded-md border border-gh-border2 overflow-hidden">
+      <button @click="cleanupMode = 'dryrun'"
+        class="px-3 py-1.5 text-xs font-medium transition"
+        :class="cleanupMode === 'dryrun' ? 'bg-blue-600 text-white' : 'bg-gh-card text-gh-dim hover:text-gh-muted'">
+        Dry Run
+      </button>
+      <button @click="cleanupMode = 'live'"
+        class="px-3 py-1.5 text-xs font-medium transition border-l border-gh-border2"
+        :class="cleanupMode === 'live' ? 'bg-green-600 text-white' : 'bg-gh-card text-gh-dim hover:text-gh-muted'">
+        Live
+      </button>
+    </div>
+    <button @click="runCleanup()" :disabled="status.cleanupRunning || cleanupRunning || syncRunning"
+      class="px-4 py-1.5 rounded-md text-white text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+      :class="cleanupMode === 'live' ? 'bg-green-600 hover:bg-green-500' : 'bg-blue-600 hover:bg-blue-500'">
+      <span x-show="!cleanupRunning" x-text="cleanupMode === 'live' ? 'Run Cleanup' : 'Run Dry-Run'"></span>
+      <span x-show="cleanupRunning">Running...</span>
     </button>
-    <span x-show="testLastRun" class="text-xs text-gh-dim" x-text="'Last test: ' + testLastRun"></span>
+    <span x-show="cleanupLastRun" class="text-xs text-gh-dim" x-text="'Last run: ' + cleanupLastRun"></span>
+    <span x-show="cleanupMode === 'live' && !status.dryRun" class="text-xs text-gh-yellow">Messages will be permanently deleted</span>
   </div>
 
-  <!-- Test summary -->
-  <div x-show="testResults" class="bg-gh-card border border-gh-border rounded-lg p-4 mb-4 flex flex-wrap gap-6">
-    <div><div class="text-xs text-gh-muted">Channels Scanned</div><div class="text-lg font-semibold text-gh-blue mt-0.5" x-text="testResults?.totalProcessed || 0"></div></div>
-    <div><div class="text-xs text-gh-muted">Would Delete</div><div class="text-lg font-semibold text-gh-red mt-0.5" x-text="testResults?.totalPurged || 0"></div></div>
-    <div><div class="text-xs text-gh-muted">Errors</div><div class="text-lg font-semibold mt-0.5" :class="(testResults?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="testResults?.totalErrors || 0"></div></div>
-    <div><div class="text-xs text-gh-muted">Duration</div><div class="text-lg font-semibold text-gh-yellow mt-0.5" x-text="formatDuration(testResults?.duration)"></div></div>
+  <!-- Cleanup summary -->
+  <div x-show="cleanupResults" class="bg-gh-card border border-gh-border rounded-lg p-4 mb-4 flex flex-wrap gap-6">
+    <div><div class="text-xs text-gh-muted">Channels Scanned</div><div class="text-lg font-semibold text-gh-blue mt-0.5" x-text="cleanupResults?.totalProcessed || 0"></div></div>
+    <div><div class="text-xs text-gh-muted" x-text="cleanupResults?.dryRun ? 'Would Delete' : 'Deleted'"></div><div class="text-lg font-semibold mt-0.5" :class="cleanupResults?.dryRun ? 'text-gh-blue' : 'text-gh-green'" x-text="cleanupResults?.totalPurged || 0"></div></div>
+    <div><div class="text-xs text-gh-muted">Errors</div><div class="text-lg font-semibold mt-0.5" :class="(cleanupResults?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="cleanupResults?.totalErrors || 0"></div></div>
+    <div><div class="text-xs text-gh-muted">Duration</div><div class="text-lg font-semibold text-gh-yellow mt-0.5" x-text="formatDuration(cleanupResults?.duration)"></div></div>
+    <div x-show="cleanupResults?.dryRun" class="flex items-center"><span class="text-xs text-gh-yellow bg-yellow-900/30 px-2 py-0.5 rounded border border-yellow-800">dry-run</span></div>
   </div>
 
-  <!-- Test results per category -->
-  <template x-for="[catName, catData] in Object.entries(testResults?.categories || {}).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
+  <!-- Cleanup results per category -->
+  <template x-for="[catName, catData] in Object.entries(cleanupResults?.categories || {}).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
     <div class="bg-gh-card border border-gh-border rounded-lg p-4 mb-2">
       <div class="text-sm font-semibold mb-2 flex items-center gap-2">
-        <span class="w-2 h-2 rounded-full bg-gh-green"></span>
+        <span class="w-2 h-2 rounded-full" :class="catData.errors > 0 ? 'bg-gh-red' : 'bg-gh-green'"></span>
         <span x-text="catName"></span>
-        <span class="text-xs font-normal" :class="catData.purged > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="catData.purged > 0 ? catData.purged + ' to delete' : 'nothing to delete'"></span>
+        <span class="text-xs font-normal"
+          :class="catData.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-muted'"
+          x-text="catData.purged > 0 ? catData.purged + (cleanupResults.dryRun ? ' to delete' : ' deleted') : 'nothing to delete'"></span>
       </div>
       <template x-for="ch in catData.channels" :key="ch.name">
         <div class="flex items-center justify-between py-1 text-xs border-b border-gh-bg last:border-b-0">
           <span class="text-gh-muted"><span class="text-gh-dim">#</span><span x-text="ch.name"></span></span>
           <span class="font-semibold"
-            :class="ch.skipped ? 'text-gh-dim' : (ch.purged > 0 ? 'text-gh-red' : 'text-gh-green')"
+            :class="ch.skipped ? 'text-gh-dim' : (ch.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-green')"
             x-text="ch.skipped ? 'skipped (never delete)' : (ch.purged > 0 ? ch.purged + ' messages' : '0 (all within retention)')"></span>
         </div>
       </template>
     </div>
   </template>
 
-  <div x-show="!testResults" class="text-sm text-gh-dim text-center py-8">Click "Run Dry-Run Test" to see what would be cleaned up</div>
+  <div x-show="!cleanupResults && !cleanupRunning" class="text-sm text-gh-dim text-center py-8">Select a mode and click run to see cleanup results</div>
+</div>
+
+<!-- ===== SYNC TAB ===== -->
+<div x-show="tab === 'sync'" x-cloak class="p-6">
+  <div class="bg-gh-card border border-gh-border rounded-lg p-5">
+    <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-2">Channel Discovery</h3>
+    <p class="text-sm text-gh-muted mb-4">Discover new Discord categories and channels. Existing config and overrides are preserved — only new items are added.</p>
+    <button @click="syncChannels()" :disabled="status.cleanupRunning || syncRunning || cleanupRunning"
+      class="px-4 py-1.5 rounded-md bg-blue-600 text-white text-sm hover:bg-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed">
+      <span x-show="!syncRunning">Sync Channels</span>
+      <span x-show="syncRunning" class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-white pulse-dot"></span> Syncing...</span>
+    </button>
+  </div>
+
+  <!-- Sync results -->
+  <template x-if="syncResults">
+    <div class="bg-gh-card border border-gh-border rounded-lg p-5 mt-4">
+      <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-3">Sync Results</h3>
+      <div class="flex flex-wrap gap-6">
+        <div><div class="text-xs text-gh-muted">Categories Found</div><div class="text-lg font-semibold text-gh-blue mt-0.5" x-text="syncResults.categories || 0"></div></div>
+        <div><div class="text-xs text-gh-muted">Channels Found</div><div class="text-lg font-semibold text-gh-blue mt-0.5" x-text="syncResults.channels || 0"></div></div>
+        <div><div class="text-xs text-gh-muted">Changes</div>
+          <div class="text-lg font-semibold mt-0.5" :class="(syncResults.changes || 0) > 0 ? 'text-gh-green' : 'text-gh-muted'" x-text="syncResults.changes || 0"></div>
+        </div>
+      </div>
+      <div x-show="(syncResults.changes || 0) === 0" class="mt-3 text-xs text-gh-dim">No changes — config is up to date</div>
+      <!-- Change details -->
+      <template x-if="syncResults.details && syncResults.details.length > 0">
+        <div class="mt-4 pt-3 border-t border-gh-border">
+          <template x-for="(detail, i) in syncResults.details" :key="i">
+            <div class="flex items-start gap-2 py-1.5 text-xs border-b border-gh-bg last:border-b-0">
+              <span class="shrink-0 w-4 text-center font-semibold"
+                :class="detail.type === 'added' ? 'text-gh-green' : (detail.type === 'removed' ? 'text-gh-red' : 'text-gh-yellow')"
+                x-text="detail.type === 'added' ? '+' : (detail.type === 'removed' ? '−' : '~')"></span>
+              <div>
+                <span class="text-gh-text font-medium" x-text="detail.category"></span>
+                <span class="text-gh-dim" x-text="detail.scope === 'category' ? ' (category)' : ''"></span>
+                <template x-if="detail.channels && detail.channels.length > 0">
+                  <span class="text-gh-muted">
+                    <span x-text="detail.scope === 'category' ? ' — ' : ' '"></span>
+                    <span x-text="detail.channels.map(c => '#' + c).join(', ')"></span>
+                  </span>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+  </template>
 </div>
 
 <!-- Toast notifications -->
@@ -480,15 +633,25 @@
   x-text="toast"></div>
 
 <script>
+// Chart.js theme (set once, shared by all chart instances)
+const chartPalette = ['#58a6ff','#3fb950','#d29922','#bc8cff','#f85149','#39d353','#79c0ff','#d2a8ff','#ffa657','#ff7b72'];
+const chartTooltip = { backgroundColor: '#161b22', borderColor: '#30363d', borderWidth: 1, titleColor: '#e1e4e8', bodyColor: '#8b949e', padding: 10 };
+if (typeof Chart !== 'undefined') {
+  Chart.defaults.color = '#8b949e';
+  Chart.defaults.borderColor = '#21262d';
+}
+
 function app() {
   return {
     tab: 'overview',
     tabs: [
       { id: 'overview', label: 'Overview' },
+      { id: 'cleanup', label: 'Cleanup' },
+      { id: 'sync', label: 'Sync' },
+      { id: 'statistics', label: 'Statistics' },
       { id: 'config', label: 'Configuration' },
       { id: 'schedule', label: 'Schedule' },
       { id: 'logs', label: 'Logs', badge: 'Live' },
-      { id: 'test', label: 'Test' },
     ],
 
     // State
@@ -499,10 +662,18 @@ function app() {
     webhookTesting: null,
     openCategories: [],
     syncRunning: false,
+    syncResults: null,
     showCategoryList: false,
     categoryRunning: {},
     categoryResults: {},
     scheduleEdit: { schedule: '', timezone: '' },
+
+    // Cleanup tab
+    cleanupCategory: '',
+    cleanupResults: null,
+    cleanupRunning: false,
+    cleanupLastRun: '',
+    cleanupMode: 'dryrun',
 
     // Logs
     logLines: [],
@@ -513,11 +684,8 @@ function app() {
     sseSource: null,
     sseConnected: false,
 
-    // Test
-    testCategory: '',
-    testResults: null,
-    testRunning: false,
-    testLastRun: '',
+    // Statistics
+    statsView: 'lastRun',
 
     // Toast
     toast: '',
@@ -531,8 +699,17 @@ function app() {
       this.loadLogs();
       // Poll status every 10s
       setInterval(() => this.loadStatus(), 10000);
-      // Poll stats every 30s
-      setInterval(() => this.loadStats(), 30000);
+      // Poll stats every 30s, update charts if on statistics tab
+      setInterval(() => {
+        this.loadStats().then(() => {
+          if (this.tab === 'statistics') this.updateStatsCharts();
+        });
+      }, 30000);
+      // Chart lifecycle: init when switching to statistics, destroy when leaving
+      this.$watch('tab', (newTab, oldTab) => {
+        if (oldTab === 'statistics') this.destroyStatsCharts();
+        if (newTab === 'statistics') this.$nextTick(() => this.initStatsCharts());
+      });
     },
 
     // --- API helpers ---
@@ -608,18 +785,49 @@ function app() {
         this.webhookTesting = null;
       }
     },
-    async runNow() {
+    async runCleanup() {
+      this.cleanupRunning = true;
       try {
-        const r = await fetch('/api/cleanup/run', { method: 'POST', headers: this.apiHeaders() });
-        const data = await r.json();
+        const endpoint = this.cleanupMode === 'live' ? '/api/cleanup/run' : '/api/cleanup/dryrun';
+        const body = this.cleanupCategory ? { category: this.cleanupCategory } : {};
+        const r = await fetch(endpoint, {
+          method: 'POST',
+          headers: this.apiHeaders(),
+          body: JSON.stringify(body),
+        });
         if (r.ok) {
-          this.showToast('Cleanup started');
-          this.tab = 'logs';
+          this.cleanupResults = null;
+          const label = this.cleanupMode === 'live' ? 'Cleanup' : 'Dry-run';
+          this.showToast(`${label} started`);
+          let pollCount = 0;
+          const poll = setInterval(async () => {
+            if (++pollCount > 150) {
+              clearInterval(poll);
+              this.cleanupRunning = false;
+              this.showToast(`${label} timed out`, 'error');
+              return;
+            }
+            await this.loadStatus();
+            if (!this.status.cleanupRunning) {
+              clearInterval(poll);
+              await this.loadStats();
+              if (this.cleanupMode === 'dryrun') {
+                if (this.stats.lastRun?.dryRun) this.cleanupResults = this.stats.lastRun;
+              } else {
+                this.cleanupResults = this.stats.lastRun;
+              }
+              this.cleanupLastRun = new Date().toLocaleTimeString();
+              this.cleanupRunning = false;
+            }
+          }, 2000);
         } else {
+          const data = await r.json();
           this.showToast(data.error || 'Failed', 'error');
+          this.cleanupRunning = false;
         }
       } catch (err) {
         this.showToast('Failed: ' + err.message, 'error');
+        this.cleanupRunning = false;
       }
     },
     async syncChannels() {
@@ -628,6 +836,7 @@ function app() {
         const r = await fetch('/api/cleanup/sync', { method: 'POST', headers: this.apiHeaders() });
         const data = await r.json();
         if (r.ok) {
+          this.syncResults = data;
           const msg = data.changes > 0
             ? `Sync complete: ${data.categories} categories, ${data.channels} channels (${data.changes} changes)`
             : `Sync complete: ${data.categories} categories, ${data.channels} channels — no changes`;
@@ -733,47 +942,6 @@ function app() {
         this.showToast('Save failed: ' + err.message, 'error');
       }
     },
-    async runDryTest() {
-      this.testRunning = true;
-      try {
-        const body = this.testCategory ? { category: this.testCategory } : {};
-        const r = await fetch('/api/cleanup/dryrun', {
-          method: 'POST',
-          headers: this.apiHeaders(),
-          body: JSON.stringify(body),
-        });
-        if (r.ok) {
-          this.showToast('Dry-run started — watch Logs tab');
-          let pollCount = 0;
-          const poll = setInterval(async () => {
-            if (++pollCount > 150) { // 150 * 2s = 5 min timeout
-              clearInterval(poll);
-              this.testRunning = false;
-              this.showToast('Dry-run timed out', 'error');
-              return;
-            }
-            await this.loadStatus();
-            if (!this.status.cleanupRunning) {
-              clearInterval(poll);
-              await this.loadStats();
-              // Verify the last run was actually a dry-run (not a cron-triggered live run)
-              if (this.stats.lastRun?.dryRun) {
-                this.testResults = this.stats.lastRun;
-              }
-              this.testRunning = false;
-              this.testLastRun = new Date().toLocaleTimeString();
-            }
-          }, 2000);
-        } else {
-          const data = await r.json();
-          this.showToast(data.error || 'Failed', 'error');
-          this.testRunning = false;
-        }
-      } catch (err) {
-        this.showToast('Failed: ' + err.message, 'error');
-        this.testRunning = false;
-      }
-    },
 
     // --- Logs ---
     async loadLogs() {
@@ -820,6 +988,145 @@ function app() {
         if (this.logSearch && !(l.message || '').toLowerCase().includes(this.logSearch.toLowerCase())) return false;
         return true;
       });
+    },
+
+    // --- Statistics ---
+    get statsHighestRun() {
+      const liveRuns = (this.stats.history || []).filter(h => !h.dryRun && h.purged > 0);
+      if (liveRuns.length === 0) return { purged: 0, date: '' };
+      const best = liveRuns.reduce((a, b) => a.purged > b.purged ? a : b);
+      return { purged: best.purged, date: new Date(best.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) };
+    },
+    get statsErrorRate() {
+      if (!this.stats.lifetime?.totalRuns) return 0;
+      return this.stats.lifetime.totalErrors / this.stats.lifetime.totalRuns;
+    },
+    get statsBreakdownEmpty() {
+      const bd = this.getBreakdownData();
+      return bd.catData.length === 0 && bd.chData.length === 0;
+    },
+    getBreakdownData() {
+      if (this.statsView === 'allTime') {
+        const catEntries = Object.entries(this.stats.categoryTotals || {}).filter(([,v]) => v > 0).sort((a,b) => b[1] - a[1]);
+        const chEntries = Object.entries(this.stats.channelTotals || {}).filter(([,v]) => v > 0).sort((a,b) => b[1] - a[1]).slice(0, 10);
+        return {
+          catLabels: catEntries.map(e => e[0]), catData: catEntries.map(e => e[1]),
+          chLabels: chEntries.map(e => '#' + e[0].split('/').pop()), chData: chEntries.map(e => e[1]),
+          barColor: '#3fb950',
+        };
+      }
+      // Last run — from lastLiveRun.categories (excludes dry-runs)
+      const cats = this.stats.lastLiveRun?.categories || {};
+      const catEntries = Object.entries(cats).map(([name, d]) => [name, d.purged || 0]).filter(([,v]) => v > 0).sort((a,b) => b[1] - a[1]);
+      const chAll = [];
+      for (const [, catData] of Object.entries(cats)) {
+        for (const ch of catData.channels || []) {
+          if (ch.purged > 0) chAll.push(['#' + ch.name, ch.purged]);
+        }
+      }
+      chAll.sort((a,b) => b[1] - a[1]);
+      const chTop = chAll.slice(0, 10);
+      return {
+        catLabels: catEntries.map(e => e[0]), catData: catEntries.map(e => e[1]),
+        chLabels: chTop.map(e => e[0]), chData: chTop.map(e => e[1]),
+        barColor: '#58a6ff',
+      };
+    },
+    initStatsCharts() {
+      if (!this.stats.history || this.stats.history.length === 0) return;
+
+      // Timeline — live runs only, chronological
+      const liveHistory = [...(this.stats.history || [])].filter(h => !h.dryRun).reverse();
+      const tlLabels = liveHistory.map(h => new Date(h.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+      const tlPurged = liveHistory.map(h => h.purged);
+      const tlErrors = liveHistory.map(h => h.errors);
+      const tlEl = document.getElementById('timelineChart');
+      if (tlEl) {
+        window._statsTimelineChart = new Chart(tlEl, {
+          type: 'line',
+          data: {
+            labels: tlLabels,
+            datasets: [
+              { label: 'Deleted', data: tlPurged, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: '#58a6ff' },
+              { label: 'Errors', data: tlErrors, borderColor: '#f85149', fill: false, tension: 0.3, pointRadius: 2, pointHoverRadius: 5, pointBackgroundColor: '#f85149', borderWidth: 1.5 },
+            ],
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 12, padding: 16, usePointStyle: true } }, tooltip: chartTooltip },
+            scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 20 } }, y: { beginAtZero: true, grid: { color: '#21262d' } } },
+          },
+        });
+      }
+
+      // Breakdown charts
+      const bd = this.getBreakdownData();
+      const catEl = document.getElementById('categoryChart');
+      if (catEl) {
+        window._statsCategoryChart = new Chart(catEl, {
+          type: 'doughnut',
+          data: {
+            labels: bd.catLabels,
+            datasets: [{ data: bd.catData, backgroundColor: chartPalette.slice(0, bd.catLabels.length), borderColor: '#161b22', borderWidth: 2 }],
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false, cutout: '55%',
+            plugins: {
+              legend: { position: 'right', labels: { boxWidth: 10, padding: 10, usePointStyle: true } },
+              tooltip: { ...chartTooltip, callbacks: { label: (ctx) => ` ${ctx.label}: ${ctx.parsed.toLocaleString()} messages` } },
+            },
+          },
+        });
+      }
+      const chEl = document.getElementById('topChannelsChart');
+      if (chEl) {
+        window._statsChannelsChart = new Chart(chEl, {
+          type: 'bar',
+          data: {
+            labels: bd.chLabels,
+            datasets: [{ label: 'Messages deleted', data: bd.chData, backgroundColor: bd.barColor, hoverBackgroundColor: '#79c0ff', borderRadius: 3, barThickness: 22 }],
+          },
+          options: {
+            indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: chartTooltip },
+            scales: {
+              x: { beginAtZero: true, grid: { color: '#21262d' } },
+              y: { grid: { display: false }, ticks: { font: { family: "'SF Mono', Monaco, monospace", size: 11 } } },
+            },
+          },
+        });
+      }
+    },
+    destroyStatsCharts() {
+      if (window._statsTimelineChart) { window._statsTimelineChart.destroy(); window._statsTimelineChart = null; }
+      if (window._statsCategoryChart) { window._statsCategoryChart.destroy(); window._statsCategoryChart = null; }
+      if (window._statsChannelsChart) { window._statsChannelsChart.destroy(); window._statsChannelsChart = null; }
+    },
+    updateBreakdownCharts() {
+      const bd = this.getBreakdownData();
+      if (window._statsCategoryChart) {
+        window._statsCategoryChart.data.labels = bd.catLabels;
+        window._statsCategoryChart.data.datasets[0].data = bd.catData;
+        window._statsCategoryChart.data.datasets[0].backgroundColor = chartPalette.slice(0, bd.catLabels.length);
+        window._statsCategoryChart.update();
+      }
+      if (window._statsChannelsChart) {
+        window._statsChannelsChart.data.labels = bd.chLabels;
+        window._statsChannelsChart.data.datasets[0].data = bd.chData;
+        window._statsChannelsChart.data.datasets[0].backgroundColor = bd.barColor;
+        window._statsChannelsChart.update();
+      }
+    },
+    updateStatsCharts() {
+      // If charts don't exist yet (first data arrived while on this tab), initialize them
+      if (!window._statsTimelineChart) { this.initStatsCharts(); return; }
+      const liveHistory = [...(this.stats.history || [])].filter(h => !h.dryRun).reverse();
+      window._statsTimelineChart.data.labels = liveHistory.map(h => new Date(h.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+      window._statsTimelineChart.data.datasets[0].data = liveHistory.map(h => h.purged);
+      window._statsTimelineChart.data.datasets[1].data = liveHistory.map(h => h.errors);
+      window._statsTimelineChart.update();
+      this.updateBreakdownCharts();
     },
 
     // --- Config helpers ---

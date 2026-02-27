@@ -212,10 +212,14 @@ const CONFIG_HEADER = `# PurgeBot — Configuration
 # Config is re-read before each cleanup run — no restart needed after editing.
 # Schedule and timezone changes via the Web UI take effect immediately.
 #
+# deleteOld: true  — delete all messages older than retention (default)
+# deleteOld: false — only bulk-delete messages up to 14 days old (faster)
+#
 # Example:
 #   my-category:
 #     enabled: true
 #     default: 7                    # all channels: 7 days
+#     deleteOld: false              # skip slow individual deletes (>14 days)
 #     _channels:
 #       - general                   # uses category default (7 days)
 #       - error-channel: 14         # override: 14 days
@@ -450,15 +454,65 @@ function persistStats(lastRun) {
       data = JSON.parse(fs.readFileSync(STATS_PATH, 'utf8'));
     }
     data.lastRun = lastRun;
-    // Keep last 30 runs in history
+    if (!lastRun.dryRun) {
+      data.lastLiveRun = lastRun;
+    }
+
+    // Build per-category summary for this history entry
+    const categorySummary = {};
+    if (lastRun.categories) {
+      for (const [catName, catData] of Object.entries(lastRun.categories)) {
+        categorySummary[catName] = { purged: catData.purged || 0, errors: catData.errors || 0 };
+      }
+    }
+
+    // Keep last 90 runs in history (~3 months)
     data.history.unshift({
       timestamp: lastRun.timestamp,
       purged: lastRun.totalPurged,
       errors: lastRun.totalErrors,
       dryRun: lastRun.dryRun,
       duration: lastRun.duration,
+      categories: categorySummary,
     });
-    if (data.history.length > 30) data.history.length = 30;
+    if (data.history.length > 90) data.history.length = 90;
+
+    // Update lifetime + per-channel/category totals (live runs only, not dry-run)
+    if (!lastRun.dryRun) {
+      // Lifetime totals
+      if (!data.lifetime) data.lifetime = { totalRuns: 0, totalPurged: 0, totalErrors: 0, firstRun: lastRun.timestamp };
+      data.lifetime.totalRuns++;
+      data.lifetime.totalPurged += lastRun.totalPurged;
+      data.lifetime.totalErrors += lastRun.totalErrors;
+
+      // Per-channel and per-category totals
+      if (!data.channelTotals) data.channelTotals = {};
+      if (!data.categoryTotals) data.categoryTotals = {};
+      if (lastRun.categories) {
+        for (const [catName, catData] of Object.entries(lastRun.categories)) {
+          data.categoryTotals[catName] = (data.categoryTotals[catName] || 0) + (catData.purged || 0);
+          for (const ch of catData.channels || []) {
+            if (ch.purged > 0) {
+              // Composite key avoids collisions when different categories have same channel name
+              const chKey = catName + '/' + ch.name;
+              data.channelTotals[chKey] = (data.channelTotals[chKey] || 0) + ch.purged;
+            }
+          }
+        }
+      }
+
+      // Prune stale entries — keep top 200 channels and top 100 categories
+      const chEntries = Object.entries(data.channelTotals);
+      if (chEntries.length > 200) {
+        chEntries.sort((a, b) => b[1] - a[1]);
+        data.channelTotals = Object.fromEntries(chEntries.slice(0, 200));
+      }
+      const catEntries = Object.entries(data.categoryTotals);
+      if (catEntries.length > 100) {
+        catEntries.sort((a, b) => b[1] - a[1]);
+        data.categoryTotals = Object.fromEntries(catEntries.slice(0, 100));
+      }
+    }
 
     const tmpPath = STATS_PATH + '.tmp';
     fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
@@ -534,8 +588,14 @@ async function runCleanup(options = {}) {
       }
 
       const allowedChannels = getConfiguredChannels(catName);
+      const cat = config.categories[catName];
+      const deleteOld = cat.deleteOld !== false; // defaults to true
       const channelResults = [];
       let catErrors = false;
+      const allowedCount = [...channels].filter(c => allowedChannels.has(c.name)).length;
+      let channelIndex = 0;
+
+      log('INFO', `Processing category "${catName}" (${allowedCount} channels)`);
 
       for (const channel of channels) {
         const chanName = channel.name;
@@ -550,6 +610,9 @@ async function runCleanup(options = {}) {
         if (channelFilter && chanName !== channelFilter) {
           continue;
         }
+
+        channelIndex++;
+        log('INFO', `  Scanning ${catName}/#${chanName} (${channelIndex}/${allowedCount})`);
 
         const retention = getRetention(catName, chanName);
         const retentionSource = getRetentionSource(catName, chanName);
@@ -588,7 +651,7 @@ async function runCleanup(options = {}) {
               if (msg.createdAt < cutoff) {
                 if (msg.createdAt > bulkDeleteLimit) {
                   bulkDeletable.push(msg);
-                } else {
+                } else if (deleteOld) {
                   oldDeletable.push(msg);
                 }
               }
@@ -601,15 +664,16 @@ async function runCleanup(options = {}) {
           const totalDeletable = bulkDeletable.length + oldDeletable.length;
           let deleted = 0;
 
-          if (effectiveDryRun) {
+          if (totalDeletable === 0) {
+            log('INFO', `  ${catName}/#${chanName}: 0 messages to delete (${fetched} scanned, retention=${retention}d)`);
+          } else if (effectiveDryRun) {
             // (#5) Log correct count in dry-run mode
-            if (totalDeletable > 0) {
-              let detail = `${bulkDeletable.length} bulk`;
-              if (oldDeletable.length > 0) detail += ` + ${oldDeletable.length} old (>14d)`;
-              log('INFO', `[DRY RUN] ${catName}/#${chanName}: would delete ${totalDeletable} messages (${detail}, retention=${retention}d)`);
-            }
+            let detail = `${bulkDeletable.length} bulk`;
+            if (oldDeletable.length > 0) detail += ` + ${oldDeletable.length} old (>14d)`;
+            const bulkOnly = !deleteOld ? ' (bulk only)' : '';
+            log('INFO', `[DRY RUN] ${catName}/#${chanName}: would delete ${totalDeletable} messages (${detail}, retention=${retention}d)${bulkOnly}`);
             totalPurged += totalDeletable;
-          } else if (totalDeletable > 0) {
+          } else {
 
             // Bulk delete messages within 14-day window
             // (#3) filterOld=true prevents error if messages aged past 14d between fetch and delete
@@ -727,6 +791,7 @@ async function syncConfig({ exitOnError = true } = {}) {
   }
 
   let changes = 0;
+  const changeDetails = [];
 
   // Add new categories + check existing ones
   for (const [catName, channels] of discoveredMap) {
@@ -736,6 +801,7 @@ async function syncConfig({ exitOnError = true } = {}) {
       // New category — add as disabled with channel list
       config.categories[catName] = { enabled: false, default: config.globalDefault, _channels: sortedChannels };
       changes++;
+      changeDetails.push({ type: 'added', scope: 'category', category: catName, channels: sortedChannels });
       log('INFO', `+ Category "${catName}" (DISABLED, default: ${config.globalDefault}d) — ${channels.length} channels: ${channels.join(', ')}`);
     } else {
       const cat = config.categories[catName];
@@ -759,22 +825,39 @@ async function syncConfig({ exitOnError = true } = {}) {
         }
         delete cat.overrides;
         changes++;
+        changeDetails.push({ type: 'migrated', scope: 'overrides', category: catName });
         log('INFO', `  ${catName}: migrated overrides to inline format`);
       }
 
       // Rebuild channel list: sorted, preserving inline overrides
       const discordSet = new Set(sortedChannels);
+      const existingNames = new Set((cat._channels || []).map(ch => typeof ch === 'object' ? Object.keys(ch)[0] : ch));
       const newList = sortedChannels.map(name => {
         if (existingOverrides.has(name)) return { [name]: existingOverrides.get(name) };
         return name;
       });
 
-      // Warn about overrides on channels no longer on Discord
+      // Track added channels
+      const addedChannels = sortedChannels.filter(name => !existingNames.has(name));
+      if (addedChannels.length > 0) {
+        changeDetails.push({ type: 'added', scope: 'channel', category: catName, channels: addedChannels });
+      }
+
+      // Track removed channels (and warn about overrides)
+      const removedChannels = [];
+      for (const name of existingNames) {
+        if (!discordSet.has(name)) {
+          removedChannels.push(name);
+        }
+      }
       for (const [name] of existingOverrides) {
         if (!discordSet.has(name)) {
           log('WARN', `  ${catName}/#${name}: override removed (channel no longer on Discord)`);
           changes++;
         }
+      }
+      if (removedChannels.length > 0) {
+        changeDetails.push({ type: 'removed', scope: 'channel', category: catName, channels: removedChannels });
       }
 
       const oldList = JSON.stringify(cat._channels || []);
@@ -791,6 +874,8 @@ async function syncConfig({ exitOnError = true } = {}) {
   // Remove categories no longer on Discord
   for (const catName of Object.keys(config.categories)) {
     if (!discoveredMap.has(catName)) {
+      const removedChannels = (config.categories[catName]._channels || []).map(ch => typeof ch === 'object' ? Object.keys(ch)[0] : ch);
+      changeDetails.push({ type: 'removed', scope: 'category', category: catName, channels: removedChannels });
       delete config.categories[catName];
       changes++;
       log('WARN', `Category "${catName}": not found on Discord — removed from config`);
@@ -811,7 +896,7 @@ async function syncConfig({ exitOnError = true } = {}) {
 
   log('INFO', `Sync complete: ${discoveredMap.size} categories, ${textChannels.size} channels on Discord`);
 
-  return { categories: discoveredMap.size, channels: textChannels.size, changes };
+  return { categories: discoveredMap.size, channels: textChannels.size, changes, details: changeDetails };
 }
 
 // --- Cron Scheduling ---
