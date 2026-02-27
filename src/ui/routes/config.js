@@ -68,6 +68,11 @@ router.patch('/global', (req, res) => {
     if (updates.logging !== undefined && typeof updates.logging === 'object') {
       if (updates.logging.maxDays !== undefined) cfg.logging.maxDays = Math.max(1, Math.floor(Number(updates.logging.maxDays) || 30));
     }
+    if (updates.webhooks !== undefined && typeof updates.webhooks === 'object') {
+      if (!cfg.webhooks) cfg.webhooks = {};
+      if (updates.webhooks.cleanup !== undefined) cfg.webhooks.cleanup = String(updates.webhooks.cleanup || '');
+      if (updates.webhooks.info !== undefined) cfg.webhooks.info = String(updates.webhooks.info || '');
+    }
 
     // Write to disk
     const yamlStr = yaml.dump(cfg, { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false });

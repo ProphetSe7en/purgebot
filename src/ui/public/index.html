@@ -308,6 +308,29 @@
           <span class="text-xs text-gh-dim">ms</span>
         </div>
       </div>
+      <div class="flex items-center justify-between py-3">
+        <div><div class="text-sm">Log Retention</div><div class="text-xs text-gh-dim">Days to keep log files</div></div>
+        <div class="flex items-center gap-2">
+          <input type="number" x-model.number="editConfig.logging.maxDays" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="1">
+          <span class="text-xs text-gh-dim">days</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Webhooks -->
+  <div class="bg-gh-card border border-gh-border rounded-lg p-5 mt-4">
+    <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-1">Discord Webhooks</h3>
+    <p class="text-xs text-gh-dim mb-3">Optional — receive cleanup summaries and auto-discovery alerts in Discord</p>
+    <div class="space-y-0 divide-y divide-gh-border">
+      <div class="flex items-center justify-between py-3 gap-4">
+        <div class="shrink-0"><div class="text-sm">Cleanup</div><div class="text-xs text-gh-dim">Cleanup summary embeds after each run</div></div>
+        <input x-model="editConfig.webhooks.cleanup" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." class="flex-1 px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm font-mono focus:border-gh-blue outline-none min-w-0">
+      </div>
+      <div class="flex items-center justify-between py-3 gap-4">
+        <div class="shrink-0"><div class="text-sm">Info</div><div class="text-xs text-gh-dim">Auto-discovery notifications (new channels found)</div></div>
+        <input x-model="editConfig.webhooks.info" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." class="flex-1 px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm font-mono focus:border-gh-blue outline-none min-w-0">
+      </div>
     </div>
   </div>
 
@@ -459,7 +482,7 @@ function app() {
     // State
     status: { connected: false, dryRun: false, schedule: '0 2 * * *', timezone: 'Europe/Oslo', totalCategories: 0, enabledCategories: 0, totalChannels: 0 },
     stats: { lastRun: null, history: [] },
-    editConfig: { categories: {}, discord: {}, logging: {} },
+    editConfig: { categories: {}, discord: {}, logging: {}, webhooks: {} },
     configDirty: false,
     openCategories: [],
     syncRunning: false,
@@ -522,7 +545,11 @@ function app() {
       try {
         const r = await fetch('/api/config');
         if (r.ok) {
-          this.editConfig = await r.json();
+          const cfg = await r.json();
+          cfg.discord = cfg.discord || {};
+          cfg.logging = cfg.logging || {};
+          cfg.webhooks = cfg.webhooks || {};
+          this.editConfig = cfg;
           this.configDirty = false;
         }
       } catch {}
