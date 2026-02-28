@@ -14,11 +14,21 @@ function startServer() {
 
   app.use(express.json({ limit: '50kb' }));
 
-  // CSRF protection: require X-Requested-With header on state-changing API calls
+  // Simple rate limiter for state-changing API calls (60 req/min per IP)
+  const rateLimitMap = new Map();
+  setInterval(() => rateLimitMap.clear(), 60000);
+
+  // CSRF protection + rate limiting on state-changing API calls
   app.use('/api', (req, res, next) => {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       if (req.headers['x-requested-with'] !== 'XMLHttpRequest') {
         return res.status(403).json({ error: 'Missing X-Requested-With header' });
+      }
+      const ip = req.ip;
+      const count = (rateLimitMap.get(ip) || 0) + 1;
+      rateLimitMap.set(ip, count);
+      if (count > 60) {
+        return res.status(429).json({ error: 'Too many requests' });
       }
     }
     next();

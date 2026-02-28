@@ -15,7 +15,7 @@ router.post('/run', (req, res) => {
   }
 
   const { category, channel } = req.body || {};
-  bot.runCleanup({ categoryFilter: category || null, channelFilter: channel || null })
+  bot.runCleanup({ forceLive: true, trigger: 'manual', categoryFilter: category || null, channelFilter: channel || null })
     .catch(err => bot.log('ERROR', `UI-triggered cleanup failed: ${err.message}`));
   const label = channel ? `#${channel}` : (category || 'all');
   res.json({ ok: true, message: `Cleanup started for ${label}` });
@@ -53,10 +53,19 @@ router.post('/dryrun', (req, res) => {
   }
 
   const { category, channel } = req.body || {};
-  bot.runCleanup({ forceDryRun: true, categoryFilter: category || null, channelFilter: channel || null })
+  bot.runCleanup({ forceDryRun: true, trigger: 'manual', categoryFilter: category || null, channelFilter: channel || null })
     .catch(err => bot.log('ERROR', `UI-triggered dry-run failed: ${err.message}`));
   const label = channel ? `#${channel}` : (category || 'all');
   res.json({ ok: true, message: `Dry-run started for ${label}` });
+});
+
+// POST /api/cleanup/cancel — cancel a running cleanup
+router.post('/cancel', (req, res) => {
+  if (!bot.isCleanupRunning()) {
+    return res.status(409).json({ error: 'No cleanup running' });
+  }
+  const cancelled = bot.cancelCleanup();
+  res.json({ ok: cancelled });
 });
 
 module.exports = router;

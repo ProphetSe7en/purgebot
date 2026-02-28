@@ -17,8 +17,13 @@ if [ -d /config ] && [ ! -f /config/config.yaml ]; then
   echo "Created default config at /config/config.yaml — edit it and run --sync"
 fi
 
-# Fix ownership of config directory and all contents
-[ -d /config ] && chown -R "$PUID":"$PGID" /config
+# Fix ownership of config files (not recursive — avoids slow chown on large log dirs)
+if [ -d /config ]; then
+  chown "$PUID":"$PGID" /config
+  [ -f /config/config.yaml ] && chown "$PUID":"$PGID" /config/config.yaml
+  [ -f /config/stats.json ] && chown "$PUID":"$PGID" /config/stats.json
+  [ -d /config/logs ] && chown "$PUID":"$PGID" /config/logs
+fi
 
 echo "Starting with UID=$PUID GID=$PGID UMASK=$UMASK"
 

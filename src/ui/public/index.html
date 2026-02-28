@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PurgeBot</title>
+<link rel="icon" type="image/png" href="/favicon.png">
 <script src="vendor/tailwind.js"></script>
 <script defer src="vendor/alpine-collapse.js"></script>
 <script defer src="vendor/alpine.js"></script>
@@ -157,7 +158,7 @@
             </div>
             <div class="flex items-center gap-2">
               <span class="text-xs text-gh-muted">Delete old (&gt;14d):</span>
-              <button @click="cat.deleteOld = cat.deleteOld === false ? true : false; configDirty = true"
+              <button @click="if (cat.deleteOld === false) { delete cat.deleteOld; } else { cat.deleteOld = false; } configDirty = true"
                 class="w-8 h-4 rounded-full relative transition-colors"
                 :class="cat.deleteOld !== false ? 'bg-blue-600' : 'bg-gh-border2'">
                 <span class="absolute w-3 h-3 bg-white rounded-full top-0.5 transition-all"
@@ -240,15 +241,34 @@
     <!-- Run history -->
     <div class="bg-gh-card border border-gh-border rounded-lg p-4">
       <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-3">Run History</h3>
-      <template x-for="run in (stats.history || []).slice(0, 8)" :key="run.timestamp">
-        <div class="flex justify-between items-center py-1.5 border-b border-gh-border last:border-b-0 text-sm">
-          <div class="flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full" :class="run.errors > 0 ? 'bg-gh-red' : (run.dryRun ? 'bg-gh-blue' : 'bg-gh-green')"></span>
-            <span class="text-gh-text text-xs" x-text="formatDate(run.timestamp)"></span>
+      <template x-for="(run, idx) in (stats.history || []).slice(0, 8)" :key="run.timestamp">
+        <div class="border-b border-gh-border last:border-b-0">
+          <div @click="historyExpanded = historyExpanded === idx ? null : idx" class="flex justify-between items-center py-1.5 text-sm cursor-pointer hover:bg-gh-bg/50 transition px-1 rounded">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full" :class="run.errors > 0 ? 'bg-gh-red' : (run.dryRun ? 'bg-gh-blue' : 'bg-gh-green')"></span>
+              <span class="text-gh-text text-xs" x-text="formatDate(run.timestamp)"></span>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="px-1.5 py-0.5 rounded border"
+                :class="run.dryRun ? 'text-gh-blue border-blue-800 bg-blue-900/20' : (run.trigger === 'schedule' ? 'text-gh-purple border-purple-800 bg-purple-900/20' : 'text-gh-green border-green-800 bg-green-900/20')"
+                x-text="run.dryRun ? 'dry-run' : (run.trigger === 'schedule' ? 'scheduled' : 'live')"></span>
+              <span class="font-semibold" :class="run.purged > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="run.purged + ' purged'"></span>
+              <span class="text-gh-dim" x-text="formatDuration(run.duration)"></span>
+              <svg class="w-3 h-3 text-gh-dim transition-transform" :class="historyExpanded === idx && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </div>
           </div>
-          <div class="flex items-center gap-3 text-xs">
-            <span class="text-gh-muted" x-text="run.dryRun ? 'dry-run' : 'live'"></span>
-            <span class="font-semibold" :class="run.purged > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="run.purged + ' purged'"></span>
+          <!-- Expanded category breakdown -->
+          <div x-show="historyExpanded === idx" x-collapse class="px-1 pb-2">
+            <template x-for="[catName, catData] in Object.entries(run.categories || {}).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
+              <div class="flex items-center justify-between py-0.5 text-xs pl-4">
+                <span class="text-gh-muted" x-text="catName"></span>
+                <div class="flex items-center gap-2">
+                  <span :class="catData.purged > 0 ? (run.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-dim'" x-text="catData.purged > 0 ? catData.purged + ' purged' : 'clean'"></span>
+                  <span x-show="catData.errors > 0" class="text-gh-red" x-text="catData.errors + ' error' + (catData.errors > 1 ? 's' : '')"></span>
+                </div>
+              </div>
+            </template>
+            <div x-show="!run.categories || Object.keys(run.categories).length === 0" class="text-xs text-gh-dim pl-4 py-1">No category data</div>
           </div>
         </div>
       </template>
@@ -534,45 +554,65 @@
         Live
       </button>
     </div>
-    <button @click="runCleanup()" :disabled="status.cleanupRunning || cleanupRunning || syncRunning"
+    <button x-show="!cleanupRunning" @click="runCleanup()" :disabled="status.cleanupRunning || syncRunning"
       class="px-4 py-1.5 rounded-md text-white text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
-      :class="cleanupMode === 'live' ? 'bg-green-600 hover:bg-green-500' : 'bg-blue-600 hover:bg-blue-500'">
-      <span x-show="!cleanupRunning" x-text="cleanupMode === 'live' ? 'Run Cleanup' : 'Run Dry-Run'"></span>
-      <span x-show="cleanupRunning">Running...</span>
+      :class="cleanupMode === 'live' ? 'bg-green-600 hover:bg-green-500' : 'bg-blue-600 hover:bg-blue-500'"
+      x-text="cleanupMode === 'live' ? 'Run Cleanup' : 'Run Dry-Run'">
+    </button>
+    <button x-show="cleanupRunning" @click="cancelCleanup()" :disabled="cleanupCancelling"
+      class="px-4 py-1.5 rounded-md text-white text-sm transition bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed">
+      <span x-show="!cleanupCancelling">Cancel</span>
+      <span x-show="cleanupCancelling">Cancelling...</span>
     </button>
     <span x-show="cleanupLastRun" class="text-xs text-gh-dim" x-text="'Last run: ' + cleanupLastRun"></span>
-    <span x-show="cleanupMode === 'live' && !status.dryRun" class="text-xs text-gh-yellow">Messages will be permanently deleted</span>
+    <span x-show="cleanupMode === 'live' && !status.dryRun && !cleanupRunning" class="text-xs text-gh-yellow">Messages will be permanently deleted</span>
   </div>
 
-  <!-- Cleanup summary -->
-  <div x-show="cleanupResults" class="bg-gh-card border border-gh-border rounded-lg p-4 mb-4 flex flex-wrap gap-6">
-    <div><div class="text-xs text-gh-muted">Channels Scanned</div><div class="text-lg font-semibold text-gh-blue mt-0.5" x-text="cleanupResults?.totalProcessed || 0"></div></div>
-    <div><div class="text-xs text-gh-muted" x-text="cleanupResults?.dryRun ? 'Would Delete' : 'Deleted'"></div><div class="text-lg font-semibold mt-0.5" :class="cleanupResults?.dryRun ? 'text-gh-blue' : 'text-gh-green'" x-text="cleanupResults?.totalPurged || 0"></div></div>
-    <div><div class="text-xs text-gh-muted">Errors</div><div class="text-lg font-semibold mt-0.5" :class="(cleanupResults?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="cleanupResults?.totalErrors || 0"></div></div>
-    <div><div class="text-xs text-gh-muted">Duration</div><div class="text-lg font-semibold text-gh-yellow mt-0.5" x-text="formatDuration(cleanupResults?.duration)"></div></div>
-    <div x-show="cleanupResults?.dryRun" class="flex items-center"><span class="text-xs text-gh-yellow bg-yellow-900/30 px-2 py-0.5 rounded border border-yellow-800">dry-run</span></div>
+  <!-- Running indicator -->
+  <div x-show="cleanupRunning" class="bg-gh-card border border-gh-border rounded-lg p-4 mb-4 flex items-center gap-3">
+    <svg class="animate-spin h-5 w-5" :class="cleanupCancelling ? 'text-gh-red' : 'text-gh-blue'" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+    <span x-show="!cleanupCancelling" class="text-sm text-gh-muted" x-text="(cleanupMode === 'live' ? 'Cleanup' : 'Dry-run') + ' running... check Live Logs for progress'"></span>
+    <span x-show="cleanupCancelling" class="text-sm text-gh-red">Cancelling... finishing current channel</span>
   </div>
 
-  <!-- Cleanup results per category -->
-  <template x-for="[catName, catData] in Object.entries(cleanupResults?.categories || {}).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
-    <div class="bg-gh-card border border-gh-border rounded-lg p-4 mb-2">
-      <div class="text-sm font-semibold mb-2 flex items-center gap-2">
-        <span class="w-2 h-2 rounded-full" :class="catData.errors > 0 ? 'bg-gh-red' : 'bg-gh-green'"></span>
-        <span x-text="catName"></span>
-        <span class="text-xs font-normal"
-          :class="catData.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-muted'"
-          x-text="catData.purged > 0 ? catData.purged + (cleanupResults.dryRun ? ' to delete' : ' deleted') : 'nothing to delete'"></span>
+  <!-- Cleanup summary (clickable to expand/collapse details) -->
+  <div x-show="cleanupResults" class="bg-gh-card border border-gh-border rounded-lg mb-4 overflow-hidden">
+    <div @click="cleanupExpanded = !cleanupExpanded" class="p-4 flex flex-wrap gap-6 cursor-pointer hover:bg-gh-bg/50 transition items-center">
+      <div><div class="text-xs text-gh-muted">Channels Scanned</div><div class="text-lg font-semibold text-gh-blue mt-0.5" x-text="cleanupResults?.totalProcessed || 0"></div></div>
+      <div><div class="text-xs text-gh-muted" x-text="cleanupResults?.dryRun ? 'Would Delete' : 'Deleted'"></div><div class="text-lg font-semibold mt-0.5" :class="cleanupResults?.dryRun ? 'text-gh-blue' : 'text-gh-green'" x-text="cleanupResults?.totalPurged || 0"></div></div>
+      <div><div class="text-xs text-gh-muted">Errors</div><div class="text-lg font-semibold mt-0.5" :class="(cleanupResults?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="cleanupResults?.totalErrors || 0"></div></div>
+      <div><div class="text-xs text-gh-muted">Duration</div><div class="text-lg font-semibold text-gh-yellow mt-0.5" x-text="formatDuration(cleanupResults?.duration)"></div></div>
+      <div x-show="cleanupResults?.dryRun" class="flex items-center"><span class="text-xs text-gh-yellow bg-yellow-900/30 px-2 py-0.5 rounded border border-yellow-800">dry-run</span></div>
+      <div x-show="cleanupResults?.cancelled" class="flex items-center"><span class="text-xs text-gh-red bg-red-900/30 px-2 py-0.5 rounded border border-red-800">cancelled</span></div>
+      <div class="ml-auto flex items-center gap-2">
+        <span class="text-xs text-gh-dim" x-text="cleanupResults?.timestamp ? formatDate(cleanupResults.timestamp) : ''"></span>
+        <svg class="w-4 h-4 text-gh-dim transition-transform" :class="cleanupExpanded && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
       </div>
-      <template x-for="ch in catData.channels" :key="ch.name">
-        <div class="flex items-center justify-between py-1 text-xs border-b border-gh-bg last:border-b-0">
-          <span class="text-gh-muted"><span class="text-gh-dim">#</span><span x-text="ch.name"></span></span>
-          <span class="font-semibold"
-            :class="ch.skipped ? 'text-gh-dim' : (ch.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-green')"
-            x-text="ch.skipped ? 'skipped (never delete)' : (ch.purged > 0 ? ch.purged + ' messages' : '0 (all within retention)')"></span>
+    </div>
+
+    <!-- Cleanup results per category (collapsible) -->
+    <div x-show="cleanupExpanded" x-collapse class="border-t border-gh-border p-4 pt-2 space-y-2">
+      <template x-for="[catName, catData] in Object.entries(cleanupResults?.categories || {}).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
+        <div class="bg-gh-bg rounded-lg p-3">
+          <div class="text-sm font-semibold mb-2 flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full" :class="catData.errors > 0 ? 'bg-gh-red' : 'bg-gh-green'"></span>
+            <span x-text="catName"></span>
+            <span class="text-xs font-normal"
+              :class="catData.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-muted'"
+              x-text="catData.purged > 0 ? catData.purged + (cleanupResults.dryRun ? ' to delete' : ' deleted') : 'nothing to delete'"></span>
+          </div>
+          <template x-for="ch in catData.channels" :key="ch.name">
+            <div class="flex items-center justify-between py-1 text-xs border-b border-gh-border last:border-b-0">
+              <span class="text-gh-muted"><span class="text-gh-dim">#</span><span x-text="ch.name"></span></span>
+              <span class="font-semibold"
+                :class="ch.skipped ? 'text-gh-dim' : (ch.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-green')"
+                x-text="ch.skipped ? 'skipped (never delete)' : (ch.purged > 0 ? ch.purged + ' messages' : '0 (all within retention)')"></span>
+            </div>
+          </template>
         </div>
       </template>
     </div>
-  </template>
+  </div>
 
   <div x-show="!cleanupResults && !cleanupRunning" class="text-sm text-gh-dim text-center py-8">Select a mode and click run to see cleanup results</div>
 </div>
@@ -672,8 +712,11 @@ function app() {
     cleanupCategory: '',
     cleanupResults: null,
     cleanupRunning: false,
+    cleanupCancelling: false,
     cleanupLastRun: '',
     cleanupMode: 'dryrun',
+    cleanupExpanded: true,
+    historyExpanded: null,
 
     // Logs
     logLines: [],
@@ -694,6 +737,8 @@ function app() {
 
     async init() {
       await Promise.all([this.loadStatus(), this.loadStats(), this.loadConfig()]);
+      // Show last run results in Cleanup tab (survives page refresh)
+      if (this.stats.lastRun) this.cleanupResults = this.stats.lastRun;
       this.scheduleEdit = { schedule: this.status.schedule || '0 2 * * *', timezone: this.status.timezone || 'Europe/Oslo' };
       this.connectSSE();
       this.loadLogs();
@@ -799,27 +844,7 @@ function app() {
           this.cleanupResults = null;
           const label = this.cleanupMode === 'live' ? 'Cleanup' : 'Dry-run';
           this.showToast(`${label} started`);
-          let pollCount = 0;
-          const poll = setInterval(async () => {
-            if (++pollCount > 150) {
-              clearInterval(poll);
-              this.cleanupRunning = false;
-              this.showToast(`${label} timed out`, 'error');
-              return;
-            }
-            await this.loadStatus();
-            if (!this.status.cleanupRunning) {
-              clearInterval(poll);
-              await this.loadStats();
-              if (this.cleanupMode === 'dryrun') {
-                if (this.stats.lastRun?.dryRun) this.cleanupResults = this.stats.lastRun;
-              } else {
-                this.cleanupResults = this.stats.lastRun;
-              }
-              this.cleanupLastRun = new Date().toLocaleTimeString();
-              this.cleanupRunning = false;
-            }
-          }, 2000);
+          // Results arrive via SSE cleanup-complete event — no polling needed
         } else {
           const data = await r.json();
           this.showToast(data.error || 'Failed', 'error');
@@ -828,6 +853,22 @@ function app() {
       } catch (err) {
         this.showToast('Failed: ' + err.message, 'error');
         this.cleanupRunning = false;
+      }
+    },
+    async cancelCleanup() {
+      this.cleanupCancelling = true;
+      try {
+        const r = await fetch('/api/cleanup/cancel', { method: 'POST', headers: this.apiHeaders() });
+        if (r.ok) {
+          this.showToast('Cancelling cleanup...');
+        } else {
+          const data = await r.json();
+          this.showToast(data.error || 'Cancel failed', 'error');
+          this.cleanupCancelling = false;
+        }
+      } catch (err) {
+        this.showToast('Cancel failed: ' + err.message, 'error');
+        this.cleanupCancelling = false;
       }
     },
     async syncChannels() {
@@ -867,7 +908,6 @@ function app() {
           this.categoryRunning = { ...this.categoryRunning, [catName]: true };
           if (!this.openCategories.includes(catName)) this.openCategories.push(catName);
           this.showToast(`${this.status.dryRun ? 'Dry-run' : 'Cleanup'} started for ${catName}`);
-          this.pollRunResult(catName);
         } else {
           this.showToast(data.error || 'Failed', 'error');
         }
@@ -889,7 +929,6 @@ function app() {
           this.categoryRunning = { ...this.categoryRunning, [catName]: true };
           if (!this.openCategories.includes(catName)) this.openCategories.push(catName);
           this.showToast(`${this.status.dryRun ? 'Dry-run' : 'Cleanup'} started for #${chName}`);
-          this.pollRunResult(catName);
         } else {
           this.showToast(data.error || 'Failed', 'error');
         }
@@ -897,30 +936,7 @@ function app() {
         this.showToast('Failed: ' + err.message, 'error');
       }
     },
-    pollRunResult(catName) {
-      let pollCount = 0;
-      const poll = setInterval(async () => {
-        if (++pollCount > 150) {
-          clearInterval(poll);
-          const updated = { ...this.categoryRunning }; delete updated[catName]; this.categoryRunning = updated;
-          this.showToast('Run timed out', 'error');
-          return;
-        }
-        await this.loadStatus();
-        if (!this.status.cleanupRunning) {
-          clearInterval(poll);
-          await this.loadStats();
-          if (this.stats.lastRun?.categories?.[catName]) {
-            this.categoryResults = { ...this.categoryResults, [catName]: {
-              ...this.stats.lastRun.categories[catName],
-              dryRun: this.stats.lastRun.dryRun,
-              duration: this.stats.lastRun.duration,
-            }};
-          }
-          const updated = { ...this.categoryRunning }; delete updated[catName]; this.categoryRunning = updated;
-        }
-      }, 2000);
-    },
+    // Per-category/channel run results now arrive via SSE cleanup-complete event
     async saveSchedule() {
       try {
         const r = await fetch('/api/config/global', {
@@ -959,9 +975,43 @@ function app() {
       } catch {}
     },
     connectSSE() {
+      if (this.sseSource) { this.sseSource.close(); this.sseSource = null; }
       this.sseSource = new EventSource('/api/logs/stream');
-      this.sseSource.onopen = () => { this.sseConnected = true; };
-      this.sseSource.onerror = () => { this.sseConnected = false; };
+      this.sseSource.onopen = () => { this.sseConnected = true; this._sseRetries = 0; };
+      this.sseSource.onerror = () => {
+        this.sseConnected = false;
+        // EventSource auto-reconnects, but if it keeps failing, reconnect with backoff
+        this._sseRetries = (this._sseRetries || 0) + 1;
+        if (this._sseRetries >= 5) {
+          this.sseSource.close();
+          const delay = Math.min(30000, 2000 * this._sseRetries);
+          setTimeout(() => this.connectSSE(), delay);
+        }
+      };
+      // Listen for cleanup-complete event — handles both Cleanup tab and per-category runs
+      this.sseSource.addEventListener('cleanup-complete', (e) => {
+        try {
+          const stats = JSON.parse(e.data);
+          // Update Cleanup tab
+          this.cleanupResults = stats;
+          this.cleanupLastRun = new Date().toLocaleTimeString();
+          this.cleanupRunning = false;
+          this.cleanupCancelling = false;
+          // Update per-category results in Overview tab
+          if (stats.categories) {
+            for (const [catName, catData] of Object.entries(stats.categories)) {
+              if (this.categoryRunning[catName]) {
+                this.categoryResults = { ...this.categoryResults, [catName]: {
+                  ...catData, dryRun: stats.dryRun, duration: stats.duration,
+                }};
+                const updated = { ...this.categoryRunning }; delete updated[catName]; this.categoryRunning = updated;
+              }
+            }
+          }
+          this.loadStats();
+          this.loadStatus();
+        } catch (err) { console.warn('SSE cleanup-complete parse error:', err); }
+      });
       this.sseSource.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data);
@@ -969,10 +1019,12 @@ function app() {
           this.logLines.push(data);
           // Keep max 1000 lines
           if (this.logLines.length > 1000) this.logLines.splice(0, this.logLines.length - 1000);
-          // Auto-scroll
+          // Auto-scroll only if user is near the bottom
           this.$nextTick(() => {
             const c = this.$refs.logContainer;
-            if (c) c.scrollTop = c.scrollHeight;
+            if (c && (c.scrollHeight - c.scrollTop - c.clientHeight) < 100) {
+              c.scrollTop = c.scrollHeight;
+            }
           });
         } catch {}
       };
@@ -1153,7 +1205,9 @@ function app() {
         // Remove override — make it a plain string
         cat._channels[idx] = name;
       } else {
-        cat._channels[idx] = { [name]: parseInt(value) };
+        const parsed = parseInt(value, 10);
+        if (isNaN(parsed)) return;
+        cat._channels[idx] = { [name]: parsed };
       }
       this.configDirty = true;
     },
@@ -1163,7 +1217,9 @@ function app() {
       if (value === '' || value === null || value === undefined) {
         delete cat.default;
       } else {
-        cat.default = parseInt(value);
+        const parsed = parseInt(value, 10);
+        if (isNaN(parsed)) return;
+        cat.default = parsed;
       }
       this.configDirty = true;
     },

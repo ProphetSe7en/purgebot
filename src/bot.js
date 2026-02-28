@@ -232,6 +232,12 @@ const CONFIG_HEADER = `# PurgeBot — Configuration
 
 `;
 
+// Strip internal keys before writing config to disk or sending via API
+function configForDisk() {
+  const { _discoveryComplete, ...rest } = config;
+  return rest;
+}
+
 function formatRetention(days) {
   if (days === -1) return 'never delete';
   if (days === 0) return 'delete all';
@@ -373,7 +379,7 @@ async function autoDiscoverChannels(guild) {
 
   if (changes > 0 || isFirstDiscovery) {
     config._discoveryComplete = true;
-    const yamlStr = yaml.dump(config, { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false });
+    const yamlStr = yaml.dump(configForDisk(), { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false });
     const tmpPath = CONFIG_PATH + '.tmp';
     fs.writeFileSync(tmpPath, CONFIG_HEADER + yamlStr, 'utf8');
     fs.renameSync(tmpPath, CONFIG_PATH);
@@ -473,6 +479,7 @@ function persistStats(lastRun) {
       errors: lastRun.totalErrors,
       dryRun: lastRun.dryRun,
       duration: lastRun.duration,
+      trigger: lastRun.trigger || 'schedule',
       categories: categorySummary,
     });
     if (data.history.length > 90) data.history.length = 90;
@@ -527,27 +534,33 @@ function persistStats(lastRun) {
 
 // (#9) Guard against concurrent cleanup runs
 let cleanupRunning = false;
+let cleanupCancelled = false;
 
 async function runCleanup(options = {}) {
-  const { forceDryRun = false, categoryFilter = null, channelFilter = null } = options;
+  const { forceDryRun = false, forceLive = false, categoryFilter = null, channelFilter = null, trigger = 'schedule' } = options;
 
   if (cleanupRunning) {
     log('WARN', 'Cleanup already running, skipping');
     return;
   }
   cleanupRunning = true;
+  cleanupCancelled = false;
 
   const startTime = Date.now();
 
   try {
     // (#10) Hot-reload config — don't crash on parse errors
     loadConfig(false);
-    const effectiveDryRun = config.dryRun || forceDryRun;
+    const effectiveDryRun = forceLive ? false : (config.dryRun || forceDryRun);
     let filterLabel = categoryFilter ? ` [category: ${categoryFilter}]` : '';
     if (channelFilter) filterLabel += ` [channel: #${channelFilter}]`;
     log('INFO', `Starting cleanup run (dryRun=${effectiveDryRun})${filterLabel}`);
     const guild = client.guilds.cache.get(GUILD_ID);
-    if (!guild) { log('ERROR', `Guild ${GUILD_ID} not found`); return; }
+    if (!guild) {
+      log('ERROR', `Guild ${GUILD_ID} not found`);
+      logEmitter.emit('cleanup-complete', { timestamp: new Date().toISOString(), error: `Guild ${GUILD_ID} not found`, totalProcessed: 0, totalPurged: 0, totalErrors: 1, dryRun: effectiveDryRun, duration: Date.now() - startTime, trigger, categories: {} });
+      return;
+    }
 
     // Fetch all channels fresh
     await guild.channels.fetch();
@@ -577,6 +590,10 @@ async function runCleanup(options = {}) {
 
     // Process each enabled category — only channels in _channels (allow-list)
     for (const [catName, channels] of categoryChannelMap) {
+      if (cleanupCancelled) {
+        log('INFO', 'Cleanup cancelled by user');
+        break;
+      }
       if (!isEnabled(catName)) {
         totalSkipped += channels.length;
         continue;
@@ -598,6 +615,7 @@ async function runCleanup(options = {}) {
       log('INFO', `Processing category "${catName}" (${allowedCount} channels)`);
 
       for (const channel of channels) {
+        if (cleanupCancelled) break;
         const chanName = channel.name;
 
         // Only process channels explicitly listed in _channels
@@ -612,6 +630,7 @@ async function runCleanup(options = {}) {
         }
 
         channelIndex++;
+        totalProcessed++;
         log('INFO', `  Scanning ${catName}/#${chanName} (${channelIndex}/${allowedCount})`);
 
         const retention = getRetention(catName, chanName);
@@ -620,7 +639,6 @@ async function runCleanup(options = {}) {
         // Skip if never-delete
         if (retention === -1) {
           channelResults.push({ name: chanName, skipped: true });
-          totalSkipped++;
           continue;
         }
 
@@ -667,12 +685,16 @@ async function runCleanup(options = {}) {
           if (totalDeletable === 0) {
             log('INFO', `  ${catName}/#${chanName}: 0 messages to delete (${fetched} scanned, retention=${retention}d)`);
           } else if (effectiveDryRun) {
-            // (#5) Log correct count in dry-run mode
+            // (#5) Log correct count in dry-run mode — apply same maxOld cap as live mode
+            const maxOld = config.discord.maxOldDeletesPerChannel;
+            const cappedOld = oldDeletable.slice(0, maxOld).length;
+            const wouldDelete = bulkDeletable.length + cappedOld;
             let detail = `${bulkDeletable.length} bulk`;
-            if (oldDeletable.length > 0) detail += ` + ${oldDeletable.length} old (>14d)`;
+            if (cappedOld > 0) detail += ` + ${cappedOld} old (>14d)`;
+            if (oldDeletable.length > maxOld) detail += `, ${oldDeletable.length - maxOld} old remaining`;
             const bulkOnly = !deleteOld ? ' (bulk only)' : '';
-            log('INFO', `[DRY RUN] ${catName}/#${chanName}: would delete ${totalDeletable} messages (${detail}, retention=${retention}d)${bulkOnly}`);
-            totalPurged += totalDeletable;
+            log('INFO', `[DRY RUN] ${catName}/#${chanName}: would delete ${wouldDelete} messages (${detail}, retention=${retention}d)${bulkOnly}`);
+            totalPurged += wouldDelete;
           } else {
 
             // Bulk delete messages within 14-day window
@@ -693,6 +715,7 @@ async function runCleanup(options = {}) {
             const maxOld = config.discord.maxOldDeletesPerChannel;
             const oldToDelete = oldDeletable.slice(0, maxOld);
             for (const msg of oldToDelete) {
+              if (cleanupCancelled) break;
               try {
                 await msg.delete();
                 deleted++;
@@ -709,10 +732,11 @@ async function runCleanup(options = {}) {
             totalPurged += deleted;
           }
 
-          // (N4) Report actual count in live mode, intended count in dry-run
-          const purgedCount = effectiveDryRun ? totalDeletable : deleted;
+          // (N4) Report actual count in live mode, capped count in dry-run
+          const maxOldForCount = config.discord.maxOldDeletesPerChannel;
+          const cappedTotal = bulkDeletable.length + Math.min(oldDeletable.length, maxOldForCount);
+          const purgedCount = effectiveDryRun ? cappedTotal : deleted;
           channelResults.push({ name: chanName, retention, retentionSource, purged: purgedCount });
-          totalProcessed++;
         } catch (err) {
           log('ERROR', `${catName}/#${chanName}: ${err.message}`);
           channelResults.push({ name: chanName, retention, retentionSource, purged: 0, error: err.message });
@@ -741,8 +765,10 @@ async function runCleanup(options = {}) {
     }
 
     // (#5) Summary log — correct count in both modes
+    const cancelled = cleanupCancelled;
     const action = effectiveDryRun ? 'would delete' : 'deleted';
-    log('INFO', `Cleanup complete: ${totalProcessed} channels processed, ${totalPurged} messages ${action}, ${totalSkipped} skipped, ${totalErrors} errors`);
+    const suffix = cancelled ? ' (cancelled)' : '';
+    log('INFO', `Cleanup ${cancelled ? 'cancelled' : 'complete'}: ${totalProcessed} channels processed, ${totalPurged} messages ${action}, ${totalSkipped} skipped, ${totalErrors} errors`);
 
     // Send webhook only when there's something to report
     if (embeds.length > 0) {
@@ -751,12 +777,17 @@ async function runCleanup(options = {}) {
 
     // Persist stats to stats.json
     const duration = Date.now() - startTime;
-    persistStats({
+    const runStats = {
       timestamp: new Date().toISOString(),
       totalProcessed, totalPurged, totalErrors,
-      dryRun: effectiveDryRun, duration,
+      dryRun: effectiveDryRun, duration, trigger,
+      cancelled,
       categories: categoryStats,
-    });
+    };
+    persistStats(runStats);
+
+    // Notify UI via SSE that cleanup is complete
+    logEmitter.emit('cleanup-complete', runStats);
 
     // (#6) Update heartbeat after successful run
     writeHeartbeat();
@@ -884,7 +915,7 @@ async function syncConfig({ exitOnError = true } = {}) {
 
   // (#7) Only write config when there are actual changes
   if (changes > 0) {
-    const yamlStr = yaml.dump(config, { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false });
+    const yamlStr = yaml.dump(configForDisk(), { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false });
     const tmpPath = CONFIG_PATH + '.tmp';
     fs.writeFileSync(tmpPath, CONFIG_HEADER + yamlStr, 'utf8');
     fs.renameSync(tmpPath, CONFIG_PATH);
@@ -967,11 +998,17 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 // --- Module Exports (for UI server) ---
 
 function isCleanupRunning() { return cleanupRunning; }
+function cancelCleanup() {
+  if (!cleanupRunning) return false;
+  cleanupCancelled = true;
+  log('INFO', 'Cleanup cancellation requested');
+  return true;
+}
 
 module.exports = {
   config, client, logEmitter, loadConfig, runCleanup, syncConfig, setupCron,
-  CONFIG_HEADER, CONFIG_PATH, STATS_PATH, fixOwnership, log, LOG_DIR,
-  isCleanupRunning, writeHeartbeat, getConfiguredChannels,
+  CONFIG_HEADER, CONFIG_PATH, STATS_PATH, fixOwnership, configForDisk, log, LOG_DIR,
+  isCleanupRunning, cancelCleanup, writeHeartbeat, getConfiguredChannels,
   getRetention, getRetentionSource, formatRetention,
 };
 

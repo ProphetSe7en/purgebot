@@ -77,7 +77,13 @@ router.get('/stream', (req, res) => {
     res.write(`data: ${JSON.stringify(entry)}\n\n`);
   };
 
+  // Forward cleanup-complete events
+  const onCleanupComplete = (stats) => {
+    res.write(`event: cleanup-complete\ndata: ${JSON.stringify(stats)}\n\n`);
+  };
+
   bot.logEmitter.on('log', onLog);
+  bot.logEmitter.on('cleanup-complete', onCleanupComplete);
 
   // Heartbeat every 30s
   const heartbeat = setInterval(() => {
@@ -87,6 +93,7 @@ router.get('/stream', (req, res) => {
   // Cleanup on disconnect
   req.on('close', () => {
     bot.logEmitter.removeListener('log', onLog);
+    bot.logEmitter.removeListener('cleanup-complete', onCleanupComplete);
     clearInterval(heartbeat);
   });
 });

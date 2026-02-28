@@ -4,9 +4,10 @@ const fs = require('fs');
 const router = express.Router();
 const bot = require('../../bot');
 
-// GET /api/config — full config as JSON
+// GET /api/config — full config as JSON (excludes internal keys)
 router.get('/', (req, res) => {
-  res.json(bot.config);
+  const { _discoveryComplete, ...rest } = bot.config;
+  res.json(rest);
 });
 
 // PUT /api/config — replace full config
@@ -17,10 +18,26 @@ router.put('/', (req, res) => {
       return res.status(400).json({ error: 'Invalid config object' });
     }
 
+    // Strip internal keys that shouldn't be set via API
+    delete newConfig._discoveryComplete;
+
     // Validate required fields
     if (newConfig.globalDefault !== undefined) {
       if (typeof newConfig.globalDefault !== 'number' || !Number.isInteger(newConfig.globalDefault) || newConfig.globalDefault < -1) {
         return res.status(400).json({ error: 'globalDefault must be integer >= -1' });
+      }
+    }
+
+    // Validate schedule if provided
+    const cron = require('node-cron');
+    if (newConfig.schedule !== undefined && !cron.validate(String(newConfig.schedule))) {
+      return res.status(400).json({ error: `Invalid cron schedule: "${newConfig.schedule}"` });
+    }
+
+    // Validate categories structure
+    if (newConfig.categories !== undefined) {
+      if (typeof newConfig.categories !== 'object' || Array.isArray(newConfig.categories)) {
+        return res.status(400).json({ error: 'categories must be an object' });
       }
     }
 
@@ -60,9 +77,9 @@ router.patch('/global', (req, res) => {
     // Whitelist discord sub-fields
     if (updates.discord !== undefined && typeof updates.discord === 'object') {
       const d = updates.discord;
-      if (d.maxMessagesPerChannel !== undefined) cfg.discord.maxMessagesPerChannel = Math.max(1, Math.floor(Number(d.maxMessagesPerChannel) || 500));
-      if (d.maxOldDeletesPerChannel !== undefined) cfg.discord.maxOldDeletesPerChannel = Math.max(0, Math.floor(Number(d.maxOldDeletesPerChannel) || 50));
-      if (d.delayBetweenChannels !== undefined) cfg.discord.delayBetweenChannels = Math.max(0, Math.floor(Number(d.delayBetweenChannels) || 2000));
+      if (d.maxMessagesPerChannel !== undefined) { const v = Number(d.maxMessagesPerChannel); if (!isNaN(v)) cfg.discord.maxMessagesPerChannel = Math.max(1, Math.floor(v)); }
+      if (d.maxOldDeletesPerChannel !== undefined) { const v = Number(d.maxOldDeletesPerChannel); if (!isNaN(v)) cfg.discord.maxOldDeletesPerChannel = Math.max(0, Math.floor(v)); }
+      if (d.delayBetweenChannels !== undefined) { const v = Number(d.delayBetweenChannels); if (!isNaN(v)) cfg.discord.delayBetweenChannels = Math.max(0, Math.floor(v)); }
       if (d.skipPinned !== undefined) cfg.discord.skipPinned = !!d.skipPinned;
     }
     if (updates.logging !== undefined && typeof updates.logging === 'object') {
@@ -74,8 +91,8 @@ router.patch('/global', (req, res) => {
       if (updates.webhooks.info !== undefined) cfg.webhooks.info = String(updates.webhooks.info || '');
     }
 
-    // Write to disk
-    const yamlStr = yaml.dump(cfg, { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false });
+    // Write to disk (strip internal keys)
+    const yamlStr = yaml.dump(bot.configForDisk(), { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false });
     const tmpPath = bot.CONFIG_PATH + '.tmp';
     fs.writeFileSync(tmpPath, bot.CONFIG_HEADER + yamlStr, 'utf8');
     fs.renameSync(tmpPath, bot.CONFIG_PATH);
@@ -171,8 +188,8 @@ router.patch('/category/:name', (req, res) => {
       cat._channels = updates._channels;
     }
 
-    // Write to disk
-    const yamlStr = yaml.dump(cfg, { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false });
+    // Write to disk (strip internal keys)
+    const yamlStr = yaml.dump(bot.configForDisk(), { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false });
     const tmpPath = bot.CONFIG_PATH + '.tmp';
     fs.writeFileSync(tmpPath, bot.CONFIG_HEADER + yamlStr, 'utf8');
     fs.renameSync(tmpPath, bot.CONFIG_PATH);
