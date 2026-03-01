@@ -136,6 +136,39 @@
           class="text-xs px-2.5 py-1 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-green hover:border-green-800 transition">Enable All</button>
         <button @click="Object.values(editConfig.categories).forEach(c => c.enabled = false); configDirty = true"
           class="text-xs px-2.5 py-1 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-red hover:border-red-800 transition">Disable All</button>
+        <button @click="massEditOpen = !massEditOpen; if (!massEditOpen) massEditReset()"
+          class="text-xs px-2.5 py-1 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-blue hover:border-gh-blue transition"
+          :class="massEditOpen && 'text-gh-blue border-gh-blue'">Set Retention</button>
+      </div>
+    </div>
+    <!-- Mass edit retention panel -->
+    <div x-show="massEditOpen" x-collapse class="bg-gh-card border border-gh-border rounded-lg p-4 mb-2">
+      <div class="flex items-center gap-2 mb-3">
+        <label class="flex items-center gap-1.5 cursor-pointer text-xs text-gh-muted">
+          <input type="checkbox" :checked="massEditAllSelected" @change="massEditToggleAll()" class="rounded border-gh-border2 bg-gh-bg">
+          <span>Select All</span>
+        </label>
+        <span class="text-xs text-gh-dim" x-text="'(' + massEditSelectedCount + '/' + massEditCatNames.length + ' selected)'"></span>
+      </div>
+      <div class="flex flex-wrap gap-x-4 gap-y-1.5 mb-3">
+        <template x-for="name in massEditCatNames" :key="name">
+          <label class="flex items-center gap-1.5 cursor-pointer text-xs">
+            <input type="checkbox" x-model="massEditSelected[name]" class="rounded border-gh-border2 bg-gh-bg">
+            <span :class="editConfig.categories[name]?.enabled ? 'text-gh-text' : 'text-gh-dim'" x-text="name"></span>
+          </label>
+        </template>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-gh-muted">Retention:</span>
+          <input type="number" x-model.number="massEditDays" min="-1" placeholder="days"
+            class="px-2 py-1 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs w-16 text-center focus:border-gh-blue outline-none">
+          <span class="text-xs text-gh-dim">days</span>
+        </div>
+        <button @click="massEditApply()" :disabled="massEditSelectedCount === 0 || massEditDays === '' || isNaN(massEditDays)"
+          class="text-xs px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-500 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          x-text="'Apply to ' + massEditSelectedCount"></button>
+        <button @click="massEditReset()" class="text-xs text-gh-muted hover:text-gh-text transition">Cancel</button>
       </div>
     </div>
     <template x-for="[catName, cat] in Object.entries(editConfig.categories || {}).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
@@ -628,8 +661,8 @@
     </button>
     <button x-show="cleanupRunning" @click="cancelCleanup()" :disabled="cleanupCancelling"
       class="px-4 py-1.5 rounded-md text-white text-sm transition bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed">
-      <span x-show="!cleanupCancelling">Cancel</span>
-      <span x-show="cleanupCancelling">Cancelling...</span>
+      <span x-show="!cleanupCancelling">Stop</span>
+      <span x-show="cleanupCancelling">Stopping...</span>
     </button>
     <span x-show="cleanupLastRun" class="text-xs text-gh-dim" x-text="'Last run: ' + formatDate(cleanupLastRun)"></span>
     <span x-show="cleanupMode === 'live' && !status.dryRun && !cleanupRunning" class="text-xs text-gh-yellow">Messages will be permanently deleted</span>
@@ -640,7 +673,7 @@
   <div x-show="cleanupRunning" class="bg-gh-card border border-gh-border rounded-lg p-4 mb-4 flex items-center gap-3">
     <svg class="animate-spin h-5 w-5" :class="cleanupCancelling ? 'text-gh-red' : 'text-gh-blue'" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
     <span x-show="!cleanupCancelling" class="text-sm text-gh-muted" x-text="(cleanupMode === 'live' ? 'Cleanup' : 'Dry-run') + ' running... check Live Logs for progress'"></span>
-    <span x-show="cleanupCancelling" class="text-sm text-gh-red">Cancelling... finishing current channel</span>
+    <span x-show="cleanupCancelling" class="text-sm text-gh-red">Stopping... finishing current channel</span>
   </div>
 
   <!-- Cleanup summary (clickable to expand/collapse details) -->
@@ -651,7 +684,7 @@
       <div><div class="text-xs text-gh-muted">Errors</div><div class="text-lg font-semibold mt-0.5" :class="(cleanupResults?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="cleanupResults?.totalErrors || 0"></div></div>
       <div><div class="text-xs text-gh-muted">Duration</div><div class="text-lg font-semibold text-gh-yellow mt-0.5" x-text="formatDuration(cleanupResults?.duration)"></div></div>
       <div x-show="cleanupResults?.dryRun" class="flex items-center"><span class="text-xs text-gh-yellow bg-yellow-900/30 px-2 py-0.5 rounded border border-yellow-800">dry-run</span></div>
-      <div x-show="cleanupResults?.cancelled" class="flex items-center"><span class="text-xs text-gh-red bg-red-900/30 px-2 py-0.5 rounded border border-red-800">cancelled</span></div>
+      <div x-show="cleanupResults?.cancelled" class="flex items-center"><span class="text-xs text-gh-red bg-red-900/30 px-2 py-0.5 rounded border border-red-800">stopped</span></div>
       <div class="ml-auto flex items-center gap-2">
         <span class="text-xs text-gh-dim" x-text="cleanupResults?.timestamp ? formatDate(cleanupResults.timestamp) : ''"></span>
         <svg class="w-4 h-4 text-gh-dim transition-transform" :class="cleanupExpanded && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
@@ -786,6 +819,11 @@ function app() {
     cleanupMode: 'dryrun',
     cleanupExpanded: true,
     historyExpanded: null,
+
+    // Mass edit retention
+    massEditOpen: false,
+    massEditDays: '',
+    massEditSelected: {},
 
     // Logs
     logLines: [],
@@ -948,14 +986,14 @@ function app() {
       try {
         const r = await fetch('/api/cleanup/cancel', { method: 'POST', headers: this.apiHeaders() });
         if (r.ok) {
-          this.showToast('Cancelling cleanup...');
+          this.showToast('Stopping cleanup...');
         } else {
           const data = await r.json();
-          this.showToast(data.error || 'Cancel failed', 'error');
+          this.showToast(data.error || 'Stop failed', 'error');
           this.cleanupCancelling = false;
         }
       } catch (err) {
-        this.showToast('Cancel failed: ' + err.message, 'error');
+        this.showToast('Stop failed: ' + err.message, 'error');
         this.cleanupCancelling = false;
       }
     },
@@ -1310,6 +1348,42 @@ function app() {
         cat.default = parsed;
       }
       this.configDirty = true;
+    },
+    // --- Mass edit retention ---
+    get massEditCatNames() {
+      return Object.keys(this.editConfig.categories || {}).sort((a, b) => a.localeCompare(b));
+    },
+    get massEditSelectedCount() {
+      return Object.values(this.massEditSelected).filter(Boolean).length;
+    },
+    get massEditAllSelected() {
+      const names = this.massEditCatNames;
+      return names.length > 0 && names.every(n => this.massEditSelected[n]);
+    },
+    massEditToggleAll() {
+      const allSelected = this.massEditAllSelected;
+      for (const name of this.massEditCatNames) {
+        this.massEditSelected[name] = !allSelected;
+      }
+    },
+    massEditApply() {
+      const parsed = parseInt(this.massEditDays, 10);
+      if (isNaN(parsed)) return;
+      const selected = this.massEditCatNames.filter(n => this.massEditSelected[n]);
+      if (selected.length === 0) return;
+      for (const name of selected) {
+        this.editConfig.categories[name].default = parsed;
+      }
+      this.configDirty = true;
+      this.showToast(`Set ${parsed === -1 ? 'never delete' : parsed + ' day'} retention on ${selected.length} categor${selected.length === 1 ? 'y' : 'ies'}`);
+      this.massEditOpen = false;
+      this.massEditDays = '';
+      this.massEditSelected = {};
+    },
+    massEditReset() {
+      this.massEditOpen = false;
+      this.massEditDays = '';
+      this.massEditSelected = {};
     },
     countOverrides(cat) {
       if (!cat._channels || !Array.isArray(cat._channels)) return 0;

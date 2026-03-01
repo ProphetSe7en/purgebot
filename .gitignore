@@ -5,3 +5,5 @@ logs/
 *.log
 .env
 .env.*
+icon[0-9]*.png
+App icon*
