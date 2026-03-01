@@ -2,7 +2,7 @@
 <Container version="2">
   <Name>purgebot</Name>
   <Repository>ghcr.io/prophetse7en/purgebot:latest</Repository>
-  <Registry>https://github.com/ProphetSe7en/purgebot/pkgs/container/purgebot</Registry>
+  <Registry>https://github.com/prophetse7en/purgebot/pkgs/container/purgebot</Registry>
   <Branch>
     <Tag>latest</Tag>
     <TagDescription>Latest stable release</TagDescription>
@@ -10,13 +10,13 @@
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/ProphetSe7en/purgebot/issues</Support>
-  <Project>https://github.com/ProphetSe7en/purgebot</Project>
+  <Support>https://github.com/prophetse7en/purgebot/issues</Support>
+  <Project>https://github.com/prophetse7en/purgebot</Project>
   <Overview>Automated Discord message cleanup with retention policies, Web UI, and auto-discovery. Define per-category and per-channel retention rules, and PurgeBot handles the rest on a schedule or on-demand. Built-in Web UI for managing categories, editing retention, triggering runs, and viewing real-time logs.</Overview>
   <Category>Tools: Productivity:</Category>
   <WebUI>http://[IP]:[PORT:3050]</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/ProphetSe7en/purgebot/main/unraid-template.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/ProphetSe7en/purgebot/main/icon.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/prophetse7en/purgebot/main/unraid-template.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/prophetse7en/purgebot/main/icon.png</Icon>
   <ExtraParams/>
   <PostArgs/>
   <DonateText/>

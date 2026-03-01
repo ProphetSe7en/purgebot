@@ -34,6 +34,6 @@ HEALTHCHECK --interval=60s --timeout=5s --retries=3 \
 ENTRYPOINT ["/entrypoint.sh"]
 LABEL org.opencontainers.image.title="PurgeBot" \
       org.opencontainers.image.description="Automated Discord message cleanup with retention policies and Web UI" \
-      org.opencontainers.image.source="https://github.com/ProphetSe7en/purgebot"
+      org.opencontainers.image.source="https://github.com/prophetse7en/purgebot"
 
 CMD ["node", "src/bot.js"]

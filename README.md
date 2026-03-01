@@ -249,7 +249,7 @@ services:
 ### Building from Source
 
 ```bash
-git clone https://github.com/ProphetSe7en/purgebot.git
+git clone https://github.com/prophetse7en/purgebot.git
 cd purgebot
 docker build -t purgebot .
 docker run -d --name purgebot -p 3050:3050 \
@@ -269,7 +269,7 @@ PurgeBot includes an Unraid Docker template for easy installation.
 
 1. In the Unraid web UI, go to **Docker** tab
 2. Scroll to the bottom and click **Template Repositories**
-3. Add this URL: `https://github.com/ProphetSe7en/purgebot`
+3. Add this URL: `https://github.com/prophetse7en/purgebot`
 4. Click **Save**
 
 **Install the container:**
