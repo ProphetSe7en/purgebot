@@ -556,11 +556,12 @@ async function runCleanup(options = {}) {
   cleanupCancelled = false;
 
   const startTime = Date.now();
+  let effectiveDryRun = forceDryRun;
 
   try {
     // (#10) Hot-reload config — don't crash on parse errors
     loadConfig(false);
-    const effectiveDryRun = forceLive ? false : (config.dryRun || forceDryRun);
+    effectiveDryRun = forceLive ? false : (config.dryRun || forceDryRun);
     let filterLabel = categoryFilter ? ` [category: ${categoryFilter}]` : '';
     if (channelFilter) filterLabel += ` [channel: #${channelFilter}]`;
     log('INFO', `Starting cleanup run (dryRun=${effectiveDryRun})${filterLabel}`);
@@ -596,6 +597,10 @@ async function runCleanup(options = {}) {
 
     const embeds = [];
     const categoryStats = {};
+
+    function emitProgress(data) {
+      logEmitter.emit('cleanup-progress', data);
+    }
 
     // Process each enabled category — only channels in _channels (allow-list)
     for (const [catName, channels] of categoryChannelMap) {
@@ -641,13 +646,16 @@ async function runCleanup(options = {}) {
         channelIndex++;
         totalProcessed++;
         log('INFO', `  Scanning ${catName}/#${chanName} (${channelIndex}/${allowedCount})`);
+        emitProgress({ category: catName, currentChannel: chanName, dryRun: effectiveDryRun });
 
         const retention = getRetention(catName, chanName);
         const retentionSource = getRetentionSource(catName, chanName);
 
         // Skip if never-delete
         if (retention === -1) {
-          channelResults.push({ name: chanName, skipped: true });
+          const result = { name: chanName, skipped: true };
+          channelResults.push(result);
+          emitProgress({ category: catName, channel: result, totalProcessed, totalPurged, totalErrors, dryRun: effectiveDryRun });
           continue;
         }
 
@@ -767,6 +775,13 @@ async function runCleanup(options = {}) {
           totalErrors++;
         }
 
+        emitProgress({
+          category: catName,
+          channel: channelResults[channelResults.length - 1],
+          totalProcessed, totalPurged, totalErrors,
+          dryRun: effectiveDryRun,
+        });
+
         await sleep(config.discord.delayBetweenChannels);
       }
 
@@ -790,7 +805,6 @@ async function runCleanup(options = {}) {
     // (#5) Summary log — correct count in both modes
     const cancelled = cleanupCancelled;
     const action = effectiveDryRun ? 'would delete' : 'deleted';
-    const suffix = cancelled ? ' (cancelled)' : '';
     log('INFO', `Cleanup ${cancelled ? 'cancelled' : 'complete'}: ${totalProcessed} channels processed, ${totalPurged} messages ${action}, ${totalSkipped} skipped, ${totalErrors} errors`);
 
     // Send webhook only when there's something to report
@@ -820,7 +834,7 @@ async function runCleanup(options = {}) {
       timestamp: new Date().toISOString(),
       error: err.message,
       totalProcessed: 0, totalPurged: 0, totalErrors: 1,
-      dryRun: false, duration: Date.now() - startTime, trigger,
+      dryRun: effectiveDryRun, duration: Date.now() - startTime, trigger,
       categories: {},
     });
   } finally {

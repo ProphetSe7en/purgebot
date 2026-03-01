@@ -72,28 +72,40 @@ router.get('/stream', (req, res) => {
   // Send initial connection event
   res.write('data: {"type":"connected"}\n\n');
 
+  // Guard writes — disconnected client can throw ERR_STREAM_DESTROYED
+  // which propagates synchronously through EventEmitter.emit() into callers
+  function safeSend(str) {
+    try { if (!res.destroyed) res.write(str); } catch {}
+  }
+
   // Forward log events
   const onLog = (entry) => {
-    res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    safeSend(`data: ${JSON.stringify(entry)}\n\n`);
   };
 
   // Forward cleanup-complete events
   const onCleanupComplete = (stats) => {
-    res.write(`event: cleanup-complete\ndata: ${JSON.stringify(stats)}\n\n`);
+    safeSend(`event: cleanup-complete\ndata: ${JSON.stringify(stats)}\n\n`);
+  };
+
+  const onCleanupProgress = (data) => {
+    safeSend(`event: cleanup-progress\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
   bot.logEmitter.on('log', onLog);
   bot.logEmitter.on('cleanup-complete', onCleanupComplete);
+  bot.logEmitter.on('cleanup-progress', onCleanupProgress);
 
   // Heartbeat every 30s
   const heartbeat = setInterval(() => {
-    res.write(': heartbeat\n\n');
+    safeSend(': heartbeat\n\n');
   }, 30000);
 
   // Cleanup on disconnect
   req.on('close', () => {
     bot.logEmitter.removeListener('log', onLog);
     bot.logEmitter.removeListener('cleanup-complete', onCleanupComplete);
+    bot.logEmitter.removeListener('cleanup-progress', onCleanupProgress);
     clearInterval(heartbeat);
   });
 });

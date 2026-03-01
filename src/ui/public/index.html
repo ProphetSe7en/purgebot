@@ -672,7 +672,7 @@
   <!-- Running indicator -->
   <div x-show="cleanupRunning" class="bg-gh-card border border-gh-border rounded-lg p-4 mb-4 flex items-center gap-3">
     <svg class="animate-spin h-5 w-5" :class="cleanupCancelling ? 'text-gh-red' : 'text-gh-blue'" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-    <span x-show="!cleanupCancelling" class="text-sm text-gh-muted" x-text="(cleanupMode === 'live' ? 'Cleanup' : 'Dry-run') + ' running... check Live Logs for progress'"></span>
+    <span x-show="!cleanupCancelling" class="text-sm text-gh-muted" x-text="cleanupCurrentChannel ? 'Processing #' + cleanupCurrentChannel + '...' : (cleanupMode === 'live' ? 'Cleanup' : 'Dry-run') + ' starting...'"></span>
     <span x-show="cleanupCancelling" class="text-sm text-gh-red">Stopping... finishing current channel</span>
   </div>
 
@@ -815,6 +815,7 @@ function app() {
     cleanupResults: null,
     cleanupRunning: false,
     cleanupCancelling: false,
+    cleanupCurrentChannel: null,
     cleanupLastRun: '',
     cleanupMode: 'dryrun',
     cleanupExpanded: true,
@@ -846,7 +847,8 @@ function app() {
     async init() {
       await Promise.all([this.loadStatus(), this.loadStats(), this.loadConfig()]);
       // Show last run results in Cleanup tab (survives page refresh)
-      if (this.stats.lastRun) this.cleanupResults = this.stats.lastRun;
+      // Don't load stale lastRun if a cleanup is currently active — progress events will build it
+      if (this.stats.lastRun && !this.status.cleanupRunning) this.cleanupResults = this.stats.lastRun;
       this.scheduleEdit = { schedule: this.status.schedule || '0 2 * * *' };
       this.connectSSE();
       this.loadLogs();
@@ -885,6 +887,9 @@ function app() {
             // Server says done but we still think it's running — reset
             this.cleanupRunning = false;
             this.cleanupCancelling = false;
+            this.cleanupCurrentChannel = null;
+            // Clear stuck categoryRunning flags (SSE disconnect fallback)
+            if (Object.keys(this.categoryRunning).length > 0) this.categoryRunning = {};
           }
         }
       } catch {}
@@ -958,6 +963,8 @@ function app() {
     },
     async runCleanup() {
       this.cleanupRunning = true;
+      this.cleanupResults = null;
+      this.cleanupCurrentChannel = null;
       try {
         const endpoint = this.cleanupMode === 'live' ? '/api/cleanup/run' : '/api/cleanup/dryrun';
         const body = this.cleanupCategory ? { category: this.cleanupCategory } : {};
@@ -967,7 +974,6 @@ function app() {
           body: JSON.stringify(body),
         });
         if (r.ok) {
-          this.cleanupResults = null;
           const label = this.cleanupMode === 'live' ? 'Cleanup' : 'Dry-run';
           this.showToast(`${label} started`);
           // Results arrive via SSE cleanup-complete event — no polling needed
@@ -1119,15 +1125,44 @@ function app() {
           setTimeout(() => this.connectSSE(), delay);
         }
       };
+      // Listen for cleanup-progress event — incremental results per channel
+      this.sseSource.addEventListener('cleanup-progress', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (!data.channel) {
+            // Scanning event — update current channel indicator
+            this.cleanupCurrentChannel = data.currentChannel || null;
+          } else {
+            // Channel result — build up cleanupResults incrementally
+            if (!this.cleanupResults) {
+              this.cleanupResults = { totalProcessed: 0, totalPurged: 0, totalErrors: 0, dryRun: data.dryRun, categories: {} };
+            }
+            if (!this.cleanupResults.categories[data.category]) {
+              this.cleanupResults.categories[data.category] = { processed: 0, purged: 0, errors: 0, channels: [] };
+            }
+            const cat = this.cleanupResults.categories[data.category];
+            cat.channels.push(data.channel);
+            cat.processed = cat.channels.length;
+            cat.purged = cat.channels.reduce((sum, ch) => sum + (ch.purged || 0), 0);
+            cat.errors = cat.channels.filter(ch => ch.error).length;
+            this.cleanupResults.totalProcessed = data.totalProcessed;
+            this.cleanupResults.totalPurged = data.totalPurged;
+            this.cleanupResults.totalErrors = data.totalErrors;
+            // Force reactivity
+            this.cleanupResults = { ...this.cleanupResults };
+          }
+        } catch (err) { console.warn('SSE cleanup-progress parse error:', err); }
+      });
       // Listen for cleanup-complete event — handles both Cleanup tab and per-category runs
       this.sseSource.addEventListener('cleanup-complete', (e) => {
         try {
           const stats = JSON.parse(e.data);
-          // Update Cleanup tab
+          // Update Cleanup tab — authoritative final data replaces progressive state
           this.cleanupResults = stats;
           this.cleanupLastRun = new Date().toISOString();
           this.cleanupRunning = false;
           this.cleanupCancelling = false;
+          this.cleanupCurrentChannel = null;
           // Update per-category results in Overview tab
           if (stats.categories) {
             for (const [catName, catData] of Object.entries(stats.categories)) {
