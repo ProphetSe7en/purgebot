@@ -17,7 +17,8 @@
 # Categories must have "enabled: true" to be cleaned.
 # _channels is auto-populated by --sync. Add ": <days>" to override a channel.
 # Config is re-read before each cleanup run — no restart needed after editing.
-# Schedule and timezone changes via the Web UI take effect immediately.
+# Schedule changes via the Web UI take effect immediately.
+# Timezone is set via the TZ environment variable in Docker.
 #
 # Example:
 #   my-category:
@@ -38,9 +39,6 @@ scheduleEnabled: true
 
 # Cron expression for when cleanup runs (default: daily at 02:00)
 schedule: "0 2 * * *"
-
-# Timezone used for the cron schedule
-timezone: "Europe/Oslo"
 
 # Fallback retention (days) for categories that don't set their own default
 globalDefault: 7

@@ -6,7 +6,7 @@ const bot = require('../../bot');
 
 // GET /api/config — full config as JSON (excludes internal keys)
 router.get('/', (req, res) => {
-  const { _discoveryComplete, ...rest } = bot.config;
+  const { _discoveryComplete, timezone, ...rest } = bot.config;
   res.json(rest);
 });
 
@@ -18,8 +18,9 @@ router.put('/', (req, res) => {
       return res.status(400).json({ error: 'Invalid config object' });
     }
 
-    // Strip internal keys that shouldn't be set via API
+    // Strip internal/read-only keys that shouldn't be set via API
     delete newConfig._discoveryComplete;
+    delete newConfig.timezone;
 
     // Validate required fields
     if (newConfig.globalDefault !== undefined) {
@@ -72,7 +73,7 @@ router.patch('/global', (req, res) => {
       }
       cfg.schedule = String(updates.schedule);
     }
-    if (updates.timezone !== undefined) cfg.timezone = String(updates.timezone);
+    // timezone is read-only (from TZ env var) — ignore if sent
     if (updates.globalDefault !== undefined) {
       if (typeof updates.globalDefault !== 'number' || !Number.isInteger(updates.globalDefault) || updates.globalDefault < -1) {
         return res.status(400).json({ error: 'globalDefault must be integer >= -1' });
@@ -113,8 +114,8 @@ router.patch('/global', (req, res) => {
     fs.renameSync(tmpPath, bot.CONFIG_PATH);
     bot.fixOwnership(bot.CONFIG_PATH);
 
-    // Re-setup cron if schedule, timezone, or enabled state changed (live update, no restart needed)
-    if (updates.schedule !== undefined || updates.timezone !== undefined || updates.scheduleEnabled !== undefined) {
+    // Re-setup cron if schedule or enabled state changed (live update, no restart needed)
+    if (updates.schedule !== undefined || updates.scheduleEnabled !== undefined) {
       bot.setupCron();
     }
 

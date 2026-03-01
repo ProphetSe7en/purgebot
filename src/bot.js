@@ -36,7 +36,8 @@ function loadConfig(exitOnError = true) {
     }
     parsed.dryRun = parsed.dryRun ?? false;
     parsed.schedule = parsed.schedule || '0 2 * * *';
-    parsed.timezone = parsed.timezone || 'Europe/Oslo';
+    // Timezone comes from TZ env var (set in Docker), not config
+    parsed.timezone = process.env.TZ || 'UTC';
     parsed.discord = parsed.discord || {};
     // (N12) Validate discord config values
     parsed.discord.maxMessagesPerChannel = Math.max(1, Math.floor(parsed.discord.maxMessagesPerChannel ?? 500));
@@ -215,7 +216,8 @@ const CONFIG_HEADER = `# PurgeBot — Configuration
 # Categories must have "enabled: true" to be cleaned.
 # _channels is auto-populated by --sync. Add ": <days>" to override a channel.
 # Config is re-read before each cleanup run — no restart needed after editing.
-# Schedule and timezone changes via the Web UI take effect immediately.
+# Schedule changes via the Web UI take effect immediately.
+# Timezone is set via the TZ environment variable in Docker.
 #
 # deleteOld: true  — delete all messages older than retention (default)
 # deleteOld: false — only bulk-delete messages up to 14 days old (faster)
@@ -239,7 +241,7 @@ const CONFIG_HEADER = `# PurgeBot — Configuration
 
 // Strip internal keys before writing config to disk or sending via API
 function configForDisk() {
-  const { _discoveryComplete, ...rest } = config;
+  const { _discoveryComplete, timezone, ...rest } = config;
   return rest;
 }
 
@@ -708,10 +710,15 @@ async function runCleanup(options = {}) {
             // (#3) filterOld=true prevents error if messages aged past 14d between fetch and delete
             // (N2) Use return value for accurate count
             for (let i = 0; i < bulkDeletable.length; i += 100) {
+              if (cleanupCancelled) break;
               const batch = bulkDeletable.slice(i, i + 100);
               if (batch.length === 1) {
-                await batch[0].delete();
-                deleted++;
+                try {
+                  await batch[0].delete();
+                  deleted++;
+                } catch (delErr) {
+                  log('WARN', `${catName}/#${chanName}: failed to delete message ${batch[0].id}: ${delErr.message}`);
+                }
               } else {
                 const result = await channel.bulkDelete(batch, true);
                 deleted += result.size;
@@ -721,11 +728,20 @@ async function runCleanup(options = {}) {
             // (#1) Delete old messages individually (>14 days, can't bulk delete)
             const maxOld = config.discord.maxOldDeletesPerChannel;
             const oldToDelete = oldDeletable.slice(0, maxOld);
+            if (oldToDelete.length > 0) {
+              log('INFO', `  ${catName}/#${chanName}: deleting ${oldToDelete.length} old messages (>14d, ~${Math.ceil(oldToDelete.length * 1.2)}s)...`);
+            }
+            let oldDeletedCount = 0;
             for (const msg of oldToDelete) {
               if (cleanupCancelled) break;
               try {
                 await msg.delete();
                 deleted++;
+                oldDeletedCount++;
+                // Progress update every 10 messages
+                if (oldDeletedCount % 10 === 0 && oldDeletedCount < oldToDelete.length) {
+                  log('INFO', `  ${catName}/#${chanName}: ${oldDeletedCount}/${oldToDelete.length} old messages deleted...`);
+                }
               } catch (delErr) {
                 log('WARN', `${catName}/#${chanName}: failed to delete message ${msg.id}: ${delErr.message}`);
               }
@@ -798,6 +814,15 @@ async function runCleanup(options = {}) {
 
     // (#6) Update heartbeat after successful run
     writeHeartbeat();
+  } catch (err) {
+    log('ERROR', `Cleanup failed: ${err.message}`);
+    logEmitter.emit('cleanup-complete', {
+      timestamp: new Date().toISOString(),
+      error: err.message,
+      totalProcessed: 0, totalPurged: 0, totalErrors: 1,
+      dryRun: false, duration: Date.now() - startTime, trigger,
+      categories: {},
+    });
   } finally {
     cleanupRunning = false;
   }
@@ -941,11 +966,16 @@ async function syncConfig({ exitOnError = true } = {}) {
 
 let cronJob = null;
 
+let lastCronDesc = '';
+
 function setupCron() {
-  if (cronJob) { cronJob.stop(); cronJob = null; }
+  const hadCron = !!cronJob;
+  const prevDesc = lastCronDesc;
+  if (cronJob) { cronJob.stop(); cronJob = null; lastCronDesc = ''; }
 
   if (!config.scheduleEnabled) {
-    log('INFO', 'Schedule disabled — cleanup runs manually only');
+    if (hadCron) log('INFO', 'Schedule disabled — previous schedule stopped');
+    else log('INFO', 'Schedule disabled — cleanup runs manually only');
     return;
   }
 
@@ -960,7 +990,13 @@ function setupCron() {
     runCleanup().catch(err => log('ERROR', `Cleanup failed: ${err.message}`));
   }, { timezone: config.timezone });
 
-  log('INFO', `Cron scheduled: "${schedule}" (${config.timezone})`);
+  const newDesc = `"${schedule}" (${config.timezone})`;
+  lastCronDesc = newDesc;
+  if (hadCron && prevDesc && prevDesc !== newDesc) {
+    log('INFO', `Cron rescheduled: ${newDesc} (was ${prevDesc})`);
+  } else {
+    log('INFO', `Cron scheduled: ${newDesc}`);
+  }
 }
 
 // --- Startup ---
@@ -1006,10 +1042,17 @@ function shutdown(signal) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('unhandledRejection', (err) => {
+  log('ERROR', `Unhandled rejection: ${err?.message || err}`);
+});
+client.on('error', (err) => {
+  log('ERROR', `Discord client error: ${err.message}`);
+});
 
 // --- Module Exports (for UI server) ---
 
 function isCleanupRunning() { return cleanupRunning; }
+function isCleanupCancelling() { return cleanupCancelled; }
 function cancelCleanup() {
   if (!cleanupRunning) return false;
   cleanupCancelled = true;
@@ -1020,7 +1063,7 @@ function cancelCleanup() {
 module.exports = {
   config, client, logEmitter, loadConfig, runCleanup, syncConfig, setupCron,
   CONFIG_HEADER, CONFIG_PATH, STATS_PATH, fixOwnership, configForDisk, log, LOG_DIR,
-  isCleanupRunning, cancelCleanup, writeHeartbeat, getConfiguredChannels,
+  isCleanupRunning, isCleanupCancelling, cancelCleanup, writeHeartbeat, getConfiguredChannels,
   getRetention, getRetentionSource, formatRetention,
 };
 

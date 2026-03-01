@@ -63,9 +63,15 @@
     <span x-show="status.dryRun" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-900/30 text-gh-yellow border border-yellow-800">
       <span class="w-2 h-2 rounded-full bg-gh-yellow"></span> Dry Run
     </span>
-    <!-- Running badge -->
-    <span x-show="status.cleanupRunning" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-900/30 text-gh-blue border border-blue-800">
-      <span class="w-2 h-2 rounded-full bg-gh-blue pulse-dot"></span> Running
+    <!-- Running badge + global cancel button -->
+    <span x-show="status.cleanupRunning && !cleanupCancelling" class="inline-flex items-center gap-1.5 rounded-full text-xs font-medium bg-blue-900/30 border border-blue-800">
+      <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-gh-blue">
+        <span class="w-2 h-2 rounded-full bg-gh-blue pulse-dot"></span> Running
+      </span>
+      <button @click="cancelCleanup()" class="px-2.5 py-1 text-gh-red hover:bg-red-900/30 rounded-r-full border-l border-blue-800 transition">Stop</button>
+    </span>
+    <span x-show="status.cleanupRunning && cleanupCancelling" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-900/30 text-gh-red border border-red-800">
+      <span class="w-2 h-2 rounded-full bg-gh-red pulse-dot"></span> Stopping...
     </span>
   </div>
 </header>
@@ -123,6 +129,15 @@
 
   <!-- Category Manager -->
   <div x-show="showCategoryList" x-collapse class="mb-5">
+    <div class="flex items-center justify-between mb-2">
+      <span class="text-xs text-gh-muted" x-text="Object.values(editConfig.categories || {}).filter(c => c.enabled).length + '/' + Object.keys(editConfig.categories || {}).length + ' enabled'"></span>
+      <div class="flex gap-2">
+        <button @click="Object.values(editConfig.categories).forEach(c => c.enabled = true); configDirty = true"
+          class="text-xs px-2.5 py-1 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-green hover:border-green-800 transition">Enable All</button>
+        <button @click="Object.values(editConfig.categories).forEach(c => c.enabled = false); configDirty = true"
+          class="text-xs px-2.5 py-1 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-red hover:border-red-800 transition">Disable All</button>
+      </div>
+    </div>
     <template x-for="[catName, cat] in Object.entries(editConfig.categories || {}).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
       <div class="bg-gh-card border border-gh-border rounded-lg mb-2 overflow-hidden">
         <!-- Category header -->
@@ -171,7 +186,7 @@
             </div>
           </div>
           <!-- Channel list -->
-          <template x-for="(ch, idx) in (cat._channels || [])" :key="idx">
+          <template x-for="(ch, idx) in (cat._channels || [])" :key="channelName(ch)">
             <div class="flex items-center justify-between py-1.5 text-sm">
               <span class="text-gh-muted flex items-center gap-1">
                 <span class="text-gh-dim">#</span>
@@ -284,37 +299,6 @@
 <!-- ===== CONFIGURATION TAB ===== -->
 <div x-show="tab === 'config'" x-cloak class="p-6 space-y-4">
 
-  <!-- Schedule Section -->
-  <div class="bg-gh-card border border-gh-border rounded-lg overflow-hidden">
-    <button @click="configSections.schedule = !configSections.schedule" class="w-full flex items-center justify-between px-5 py-3 hover:bg-gh-bg/50 transition cursor-pointer">
-      <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider">Schedule</h3>
-      <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="configSections.schedule && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-    </button>
-    <div x-show="configSections.schedule" x-collapse>
-      <div class="px-5 pb-4 border-t border-gh-border">
-        <div class="flex items-center justify-between py-3">
-          <div><div class="text-sm">Enabled</div><div class="text-xs text-gh-dim">Run cleanup automatically on schedule</div></div>
-          <button @click="editConfig.scheduleEnabled = !editConfig.scheduleEnabled; configDirty = true"
-            class="w-10 h-5 rounded-full relative transition-colors"
-            :class="editConfig.scheduleEnabled ? 'bg-blue-600' : 'bg-gh-border2'">
-            <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
-              :class="editConfig.scheduleEnabled ? 'left-5' : 'left-0.5'"></span>
-          </button>
-        </div>
-        <div x-show="!editConfig.scheduleEnabled" class="pb-1">
-          <div class="text-xs text-gh-yellow bg-yellow-900/20 border border-yellow-800/50 rounded px-3 py-2">
-            Schedule is paused — cleanup only runs manually from the Cleanup tab.
-          </div>
-        </div>
-        <div x-show="editConfig.scheduleEnabled" class="pb-1">
-          <div class="text-xs text-gh-muted bg-gh-bg border border-gh-border rounded px-3 py-2">
-            <span x-text="cronHuman"></span> — edit on the <button @click="tab = 'schedule'" class="text-gh-blue hover:underline">Schedule tab</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- Cleanup Section -->
   <div class="bg-gh-card border border-gh-border rounded-lg overflow-hidden">
     <button @click="configSections.cleanup = !configSections.cleanup" class="w-full flex items-center justify-between px-5 py-3 hover:bg-gh-bg/50 transition cursor-pointer">
@@ -324,9 +308,13 @@
     <div x-show="configSections.cleanup" x-collapse>
       <div class="px-5 pb-4 space-y-0 divide-y divide-gh-border border-t border-gh-border">
         <div class="flex items-center justify-between py-3">
-          <div><div class="text-sm">Dry Run</div><div class="text-xs text-gh-dim">Log what would be deleted without deleting</div></div>
+          <div>
+            <div class="text-sm">Dry Run (Global)</div>
+            <div class="text-xs text-gh-dim">When ON: scheduled runs and Overview tab runs only simulate — no messages are deleted</div>
+            <div class="text-xs text-gh-dim mt-0.5">The Cleanup tab has its own Dry Run / Live toggle that overrides this setting per run</div>
+          </div>
           <button @click="editConfig.dryRun = !editConfig.dryRun; configDirty = true"
-            class="w-10 h-5 rounded-full relative transition-colors"
+            class="w-10 h-5 rounded-full relative transition-colors shrink-0 ml-4"
             :class="editConfig.dryRun ? 'bg-blue-600' : 'bg-gh-border2'">
             <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
               :class="editConfig.dryRun ? 'left-5' : 'left-0.5'"></span>
@@ -440,7 +428,23 @@
 <!-- ===== SCHEDULE TAB ===== -->
 <div x-show="tab === 'schedule'" x-cloak class="p-6">
   <div class="bg-gh-card border border-gh-border rounded-lg p-5 mb-4">
-    <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-3">Schedule</h3>
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider">Schedule</h3>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-gh-muted">Enabled:</span>
+        <button @click="editConfig.scheduleEnabled = !editConfig.scheduleEnabled; configDirty = true"
+          class="w-10 h-5 rounded-full relative transition-colors"
+          :class="editConfig.scheduleEnabled ? 'bg-blue-600' : 'bg-gh-border2'">
+          <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+            :class="editConfig.scheduleEnabled ? 'left-5' : 'left-0.5'"></span>
+        </button>
+      </div>
+    </div>
+    <div x-show="!editConfig.scheduleEnabled" class="mb-4">
+      <div class="text-xs text-gh-yellow bg-yellow-900/20 border border-yellow-800/50 rounded px-3 py-2">
+        Schedule is paused — cleanup only runs manually from the Cleanup tab.
+      </div>
+    </div>
     <div class="flex items-center gap-4 flex-wrap">
       <div class="flex items-center gap-2">
         <span class="text-xs text-gh-muted">Cron:</span>
@@ -448,11 +452,8 @@
       </div>
       <span class="text-gh-dim">&rarr;</span>
       <span class="text-sm text-gh-muted" x-text="scheduleHumanPreview"></span>
-      <div class="flex items-center gap-2 ml-4">
-        <span class="text-xs text-gh-muted">Timezone:</span>
-        <input x-model="scheduleEdit.timezone" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-36 focus:border-gh-blue outline-none">
-      </div>
-      <button x-show="scheduleEdit.schedule !== status.schedule || scheduleEdit.timezone !== status.timezone"
+      <span class="text-xs text-gh-dim ml-2" x-text="'(' + status.timezone + ')'"></span>
+      <button x-show="scheduleEdit.schedule !== status.schedule"
         @click="saveSchedule()"
         class="px-3 py-1.5 rounded-md bg-green-600 text-white text-xs hover:bg-green-500 transition ml-2">Save</button>
     </div>
@@ -498,8 +499,8 @@
   </div>
 
   <!-- Log container -->
-  <div x-ref="logContainer" class="bg-gh-bg border border-gh-border rounded-lg p-3 log-mono text-xs leading-relaxed max-h-[500px] overflow-y-auto">
-    <template x-for="(line, i) in filteredLogs" :key="i">
+  <div class="bg-gh-bg border border-gh-border rounded-lg p-3 log-mono text-xs leading-relaxed max-h-[500px] overflow-y-auto">
+    <template x-for="line in filteredLogs" :key="line._id">
       <div class="flex gap-2 py-px">
         <template x-if="line.timestamp">
           <span class="text-gh-dim min-w-[170px] shrink-0" x-text="'[' + line.timestamp + ']'"></span>
@@ -632,6 +633,7 @@
     </button>
     <span x-show="cleanupLastRun" class="text-xs text-gh-dim" x-text="'Last run: ' + formatDate(cleanupLastRun)"></span>
     <span x-show="cleanupMode === 'live' && !status.dryRun && !cleanupRunning" class="text-xs text-gh-yellow">Messages will be permanently deleted</span>
+    <span x-show="cleanupMode === 'live' && status.dryRun && !cleanupRunning" class="text-xs text-gh-yellow">Global dry run is ON, but Live mode will delete messages for real</span>
   </div>
 
   <!-- Running indicator -->
@@ -761,11 +763,11 @@ function app() {
     ],
 
     // State
-    status: { connected: false, dryRun: false, schedule: '0 2 * * *', timezone: 'Europe/Oslo', totalCategories: 0, enabledCategories: 0, totalChannels: 0 },
+    status: { connected: false, dryRun: false, schedule: '0 2 * * *', timezone: 'UTC', totalCategories: 0, enabledCategories: 0, totalChannels: 0 },
     stats: { lastRun: null, history: [] },
     editConfig: { categories: {}, discord: {}, logging: {}, webhooks: {}, display: {}, scheduleEnabled: true },
     configDirty: false,
-    configSections: { schedule: false, cleanup: false, discord: false, display: false },
+    configSections: { cleanup: false, discord: false, display: false },
     webhookTesting: null,
     openCategories: [],
     syncRunning: false,
@@ -773,7 +775,7 @@ function app() {
     showCategoryList: false,
     categoryRunning: {},
     categoryResults: {},
-    scheduleEdit: { schedule: '', timezone: '' },
+    scheduleEdit: { schedule: '' },
 
     // Cleanup tab
     cleanupCategory: '',
@@ -787,6 +789,7 @@ function app() {
 
     // Logs
     logLines: [],
+    logSeq: 0,
     logFilter: 'All',
     logSearch: '',
     logDate: '',
@@ -806,7 +809,7 @@ function app() {
       await Promise.all([this.loadStatus(), this.loadStats(), this.loadConfig()]);
       // Show last run results in Cleanup tab (survives page refresh)
       if (this.stats.lastRun) this.cleanupResults = this.stats.lastRun;
-      this.scheduleEdit = { schedule: this.status.schedule || '0 2 * * *', timezone: this.status.timezone || 'Europe/Oslo' };
+      this.scheduleEdit = { schedule: this.status.schedule || '0 2 * * *' };
       this.connectSSE();
       this.loadLogs();
       // Poll status every 10s
@@ -817,10 +820,6 @@ function app() {
           if (this.tab === 'statistics') this.updateStatsCharts();
         });
       }, 30000);
-      // Switch away from schedule tab if schedule gets disabled
-      this.$watch('editConfig.scheduleEnabled', (enabled) => {
-        if (!enabled && this.tab === 'schedule') this.tab = 'config';
-      });
       // Chart lifecycle: init when switching to statistics, destroy when leaving
       this.$watch('tab', (newTab, oldTab) => {
         if (oldTab === 'statistics') this.destroyStatsCharts();
@@ -838,7 +837,18 @@ function app() {
     async loadStatus() {
       try {
         const r = await fetch('/api/stats/status');
-        if (r.ok) this.status = await r.json();
+        if (r.ok) {
+          this.status = await r.json();
+          // Sync local running/cancelling state with server (survives page refresh)
+          if (this.status.cleanupRunning) {
+            this.cleanupRunning = true;
+            if (this.status.cleanupCancelling) this.cleanupCancelling = true;
+          } else if (this.cleanupRunning) {
+            // Server says done but we still think it's running — reset
+            this.cleanupRunning = false;
+            this.cleanupCancelling = false;
+          }
+        }
       } catch {}
     },
     async loadStats() {
@@ -878,7 +888,6 @@ function app() {
           await this.loadStatus();
           // Sync schedule editor if schedule or timezone changed
           this.scheduleEdit.schedule = this.editConfig.schedule || '0 2 * * *';
-          this.scheduleEdit.timezone = this.editConfig.timezone || 'Europe/Oslo';
         } else {
           const data = await r.json();
           this.showToast(data.error || 'Save failed', 'error');
@@ -985,13 +994,16 @@ function app() {
           // Clear previous results, set running
           const cleared = { ...this.categoryResults }; delete cleared[catName]; this.categoryResults = cleared;
           this.categoryRunning = { ...this.categoryRunning, [catName]: true };
+          this.cleanupRunning = true;
           if (!this.openCategories.includes(catName)) this.openCategories.push(catName);
           this.showToast(`${this.status.dryRun ? 'Dry-run' : 'Cleanup'} started for ${catName}`);
         } else {
           this.showToast(data.error || 'Failed', 'error');
+          this.cleanupRunning = false;
         }
       } catch (err) {
         this.showToast('Failed: ' + err.message, 'error');
+        this.cleanupRunning = false;
       }
     },
     async runChannel(catName, chName) {
@@ -1006,13 +1018,16 @@ function app() {
         if (r.ok) {
           const cleared = { ...this.categoryResults }; delete cleared[catName]; this.categoryResults = cleared;
           this.categoryRunning = { ...this.categoryRunning, [catName]: true };
+          this.cleanupRunning = true;
           if (!this.openCategories.includes(catName)) this.openCategories.push(catName);
           this.showToast(`${this.status.dryRun ? 'Dry-run' : 'Cleanup'} started for #${chName}`);
         } else {
           this.showToast(data.error || 'Failed', 'error');
+          this.cleanupRunning = false;
         }
       } catch (err) {
         this.showToast('Failed: ' + err.message, 'error');
+        this.cleanupRunning = false;
       }
     },
     // Per-category/channel run results now arrive via SSE cleanup-complete event
@@ -1021,14 +1036,12 @@ function app() {
         const r = await fetch('/api/config/global', {
           method: 'PATCH',
           headers: this.apiHeaders(),
-          body: JSON.stringify({ schedule: this.scheduleEdit.schedule, timezone: this.scheduleEdit.timezone }),
+          body: JSON.stringify({ schedule: this.scheduleEdit.schedule }),
         });
         if (r.ok) {
           this.showToast('Schedule saved');
           await this.loadStatus();
-          // Also sync editConfig so Configuration tab stays consistent
           this.editConfig.schedule = this.scheduleEdit.schedule;
-          this.editConfig.timezone = this.scheduleEdit.timezone;
         } else {
           const data = await r.json();
           this.showToast(data.error || 'Save failed', 'error');
@@ -1048,8 +1061,9 @@ function app() {
         if (r.ok) {
           const data = await r.json();
           this.logFiles = data.files || [];
-          // Parse log lines into objects
-          this.logLines = data.lines.map(line => this.parseLogLine(line));
+          // Parse log lines into objects with stable IDs
+          this.logSeq = 0;
+          this.logLines = data.lines.map(line => ({ ...this.parseLogLine(line), _id: ++this.logSeq }));
         }
       } catch {}
     },
@@ -1095,16 +1109,10 @@ function app() {
         try {
           const data = JSON.parse(e.data);
           if (data.type === 'connected') return;
+          data._id = ++this.logSeq;
           this.logLines.push(data);
           // Keep max 1000 lines
           if (this.logLines.length > 1000) this.logLines.splice(0, this.logLines.length - 1000);
-          // Auto-scroll only if user is near the bottom
-          this.$nextTick(() => {
-            const c = this.$refs.logContainer;
-            if (c && (c.scrollHeight - c.scrollTop - c.clientHeight) < 100) {
-              c.scrollTop = c.scrollHeight;
-            }
-          });
         } catch {}
       };
     },
@@ -1114,11 +1122,12 @@ function app() {
       return { message: line };
     },
     get filteredLogs() {
-      return this.logLines.filter(l => {
+      const filtered = this.logLines.filter(l => {
         if (this.logFilter !== 'All' && l.level !== this.logFilter) return false;
         if (this.logSearch && !(l.message || '').toLowerCase().includes(this.logSearch.toLowerCase())) return false;
         return true;
       });
+      return [...filtered].reverse();
     },
 
     // --- Statistics ---
@@ -1334,7 +1343,7 @@ function app() {
 
     // --- Computed ---
     get visibleTabs() {
-      return this.tabs.filter(t => t.id !== 'schedule' || this.editConfig.scheduleEnabled !== false);
+      return this.tabs;
     },
     get topChannels() {
       if (!this.stats.lastRun?.categories) return [];
@@ -1356,14 +1365,9 @@ function app() {
         return timeMatch ? timeMatch[1] : desc;
       } catch { return '—'; }
     },
-    get cronHuman() {
-      try {
-        return cronstrue.toString(this.status.schedule || '0 2 * * *', this.cronOpts) + ' (' + (this.status.timezone || 'UTC') + ')';
-      } catch { return 'Invalid cron expression'; }
-    },
     get scheduleHumanPreview() {
       try {
-        return cronstrue.toString(this.scheduleEdit.schedule || '0 2 * * *', this.cronOpts) + ' (' + (this.scheduleEdit.timezone || 'UTC') + ')';
+        return cronstrue.toString(this.scheduleEdit.schedule || '0 2 * * *', this.cronOpts);
       } catch { return 'Invalid cron expression'; }
     },
 

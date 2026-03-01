@@ -15,7 +15,8 @@ Built for servers with many channels (media automation, homelab, development) wh
 - **Dry-run mode** — see what would be deleted before enabling live cleanup
 - **Per-channel and per-category runs** — test or clean individual channels from the UI
 - **Inline results** — run results appear directly in the UI (no log-hunting)
-- **Live log streaming** — SSE-based real-time log viewer with level filtering
+- **Cancel cleanup** — stop a running cleanup from any tab via the header Stop button
+- **Live log streaming** — SSE-based real-time log viewer with level filtering and progress updates
 - **Scheduled cleanup** — cron-based scheduling with timezone support
 - **Hot-reload config** — edit config.yaml or use the Web UI — changes take effect on next run
 - **Webhook notifications** — cleanup summaries and auto-discovery alerts to Discord
@@ -49,7 +50,7 @@ docker run -d \
   -e DISCORD_TOKEN=your_bot_token \
   -e GUILD_ID=your_server_id \
   -v /path/to/config:/config \
-  ghcr.io/ProphetSe7en/purgebot:latest
+  ghcr.io/prophetse7en/purgebot:latest
 ```
 
 On first run, a default `config.yaml` is created in the config volume. Open the Web UI at `http://your-host:3050` to configure everything.
@@ -72,26 +73,35 @@ The built-in Web UI runs on port 3050 (same container, no separate service).
 Dashboard with stat cards (categories, last run, errors, next cleanup) and a full **Category Manager**:
 
 - Click the Categories card to expand the management panel
+- **Enable All / Disable All** buttons for quick bulk toggling
 - Each category is collapsible with enable/disable toggle, default retention editor, and channel list
 - Per-channel retention overrides with inline editing
 - **Run Now / Dry Run** buttons on both category and individual channel level
 - Results appear inline (channels scanned, messages deleted, per-channel breakdown)
 
+### Cleanup Tab
+
+Unified dry-run/live toggle with cancel support. Select a category or run all, switch between Dry Run and Live mode, and see results inline. A global Stop button in the header lets you cancel from any tab.
+
+### Sync Tab
+
+Channel discovery — detects new categories and channels on your Discord server. Shows per-change details with add/remove indicators. Existing config and overrides are preserved.
+
+### Statistics Tab
+
+Lifetime stats, per-run history, messages-over-time chart, category breakdown (doughnut), and top channels (bar chart). Toggle between "Last Run" and "All Time" views.
+
 ### Configuration Tab
 
-Global settings: schedule, timezone, global default retention, dry-run toggle, skip pinned, rate limits.
+Global settings: default retention, dry-run toggle, skip pinned, rate limits, webhook URLs, and display preferences (time format, log retention).
 
 ### Schedule Tab
 
-Edit the cron expression directly with a human-readable preview. Changes apply immediately (no restart needed).
+Enable/disable scheduled cleanup and edit the cron expression with a human-readable preview. Timezone is read-only (set via the `TZ` environment variable). Changes apply immediately (no restart needed).
 
 ### Logs Tab
 
-Real-time log streaming via Server-Sent Events. Filter by level (INFO/WARN/ERROR), search text, or browse historical log files by date.
-
-### Test Tab
-
-Run a dry-run test for all categories or a specific one. Results show per-category breakdown with per-channel message counts.
+Real-time log streaming via Server-Sent Events. Filter by level (INFO/WARN/ERROR), search text, or browse historical log files by date. Newest entries appear first.
 
 ## Configuration
 
@@ -117,9 +127,9 @@ Retention is resolved per-channel using the first match:
 
 ```yaml
 schedule: "0 2 * * *"    # Daily at 02:00
-timezone: "America/New_York"
 globalDefault: 7          # 7-day fallback
 dryRun: true              # Start with true, set false when ready
+# Timezone is set via the TZ environment variable in Docker
 
 webhooks:
   cleanup: "https://discord.com/api/webhooks/..."   # Cleanup summaries
@@ -220,7 +230,7 @@ Use **Sync Channels** in the Web UI or run `--sync` from the CLI for a full reco
 ```yaml
 services:
   purgebot:
-    image: ghcr.io/ProphetSe7en/purgebot:latest
+    image: ghcr.io/prophetse7en/purgebot:latest
     container_name: purgebot
     restart: unless-stopped
     ports:
@@ -301,6 +311,7 @@ The Web UI communicates via a REST API. All state-changing requests require the 
 | `POST` | `/api/cleanup/run` | Trigger cleanup (`{category, channel}` optional) |
 | `POST` | `/api/cleanup/sync` | Trigger channel sync (returns result) |
 | `POST` | `/api/cleanup/dryrun` | Force dry-run (`{category, channel}` optional) |
+| `POST` | `/api/cleanup/cancel` | Cancel a running cleanup |
 | `GET` | `/api/logs?date=&level=&search=&limit=` | Read log files |
 | `GET` | `/api/logs/stream` | SSE endpoint for live logs |
 
@@ -329,7 +340,7 @@ src/
 - Config reference stability — clear+assign pattern keeps exported object reference valid across reloads
 - Atomic writes — all config changes write to `.tmp` then rename
 - SSE with EventEmitter bridge for real-time log streaming
-- Stats persisted to `/config/stats.json` (last 30 runs)
+- Stats persisted to `/config/stats.json` (last 90 runs)
 
 ## Security Notes
 

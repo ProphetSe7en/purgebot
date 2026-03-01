@@ -22,7 +22,7 @@ RUN chmod +x /entrypoint.sh
 
 VOLUME /config
 
-ENV TZ=Europe/Oslo
+ENV TZ=UTC
 ENV PUID=99
 ENV PGID=100
 ENV UMASK=002
