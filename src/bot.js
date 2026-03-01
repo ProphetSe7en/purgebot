@@ -46,6 +46,11 @@ function loadConfig(exitOnError = true) {
     parsed.logging = parsed.logging || {};
     parsed.logging.maxDays = Math.max(1, Math.floor(parsed.logging.maxDays ?? 30));
     parsed.webhooks = parsed.webhooks || {};
+    parsed.webhooks.cleanupColor = parsed.webhooks.cleanupColor || '#238636';
+    parsed.webhooks.infoColor = parsed.webhooks.infoColor || '#f39c12';
+    parsed.scheduleEnabled = parsed.scheduleEnabled !== false;
+    parsed.display = parsed.display || {};
+    parsed.display.timeFormat = parsed.display.timeFormat || '24h';
     parsed.categories = parsed.categories || {};
 
     // Warn about deprecated overrides: sections (#8)
@@ -305,7 +310,8 @@ function buildCategoryEmbed(catName, channelResults, hasErrors, isDryRun) {
   }
 
   const totalPurged = channelResults.reduce((sum, ch) => sum + (ch.purged || 0), 0);
-  let color = isDryRun ? 0x3498db : 0x2ecc71;
+  const successColor = parseInt((config.webhooks?.cleanupColor || '#238636').replace('#', ''), 16) || 0x238636;
+  let color = isDryRun ? 0x3498db : successColor;
   if (hasErrors) color = 0xe74c3c;
   if (totalPurged === 0 && !hasErrors) color = 0x95a5a6;
 
@@ -426,10 +432,11 @@ async function sendDiscoveryNotification(discoveries) {
     description = description.substring(0, 3990) + '\n... (truncated)';
   }
 
+  const infoColor = parseInt((config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12;
   const embed = {
     title: 'Channel Auto-Discovery',
     description,
-    color: 0xf39c12,
+    color: infoColor,
     footer: { text: `${discoveries.length} change${discoveries.length !== 1 ? 's' : ''} detected` },
     timestamp: new Date().toISOString(),
   };
@@ -935,7 +942,12 @@ async function syncConfig({ exitOnError = true } = {}) {
 let cronJob = null;
 
 function setupCron() {
-  if (cronJob) { cronJob.stop(); }
+  if (cronJob) { cronJob.stop(); cronJob = null; }
+
+  if (!config.scheduleEnabled) {
+    log('INFO', 'Schedule disabled — cleanup runs manually only');
+    return;
+  }
 
   const schedule = config.schedule;
   if (!cron.validate(schedule)) {

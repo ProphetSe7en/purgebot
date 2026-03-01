@@ -33,6 +33,9 @@
 #   docker exec purgebot node src/bot.js --sync   # discover channels
 #   docker exec purgebot node src/bot.js --now    # run cleanup now
 
+# Enable/disable automatic scheduled cleanup. When false, cleanup runs manually only.
+scheduleEnabled: true
+
 # Cron expression for when cleanup runs (default: daily at 02:00)
 schedule: "0 2 * * *"
 
@@ -54,6 +57,12 @@ webhooks:
   # Sent when scheduled cleanup detects changes on your server — not on first sync
   info: ""
 
+  # Hex color for cleanup embed sidebar (default: green)
+  cleanupColor: "#238636"
+
+  # Hex color for info/discovery embed sidebar (default: orange)
+  infoColor: "#f39c12"
+
 discord:
   # Max messages to scan per channel per run (older messages beyond this are not checked)
   maxMessagesPerChannel: 500
@@ -72,6 +81,10 @@ discord:
 logging:
   # Number of days to keep log files in /config/logs/ (auto-rotated at startup)
   maxDays: 30
+
+display:
+  # Time format for timestamps in the Web UI: "24h" (14:30) or "12h" (2:30 PM)
+  timeFormat: "24h"
 
 # Run --sync to discover your Discord categories and channels.
 # They will appear here with enabled: false — activate the ones you want cleaned.

@@ -65,7 +65,13 @@ router.patch('/global', (req, res) => {
     const cfg = bot.config;
 
     // Apply allowed global fields
-    if (updates.schedule !== undefined) cfg.schedule = String(updates.schedule);
+    if (updates.schedule !== undefined) {
+      const cron = require('node-cron');
+      if (!cron.validate(String(updates.schedule))) {
+        return res.status(400).json({ error: `Invalid cron schedule: "${updates.schedule}"` });
+      }
+      cfg.schedule = String(updates.schedule);
+    }
     if (updates.timezone !== undefined) cfg.timezone = String(updates.timezone);
     if (updates.globalDefault !== undefined) {
       if (typeof updates.globalDefault !== 'number' || !Number.isInteger(updates.globalDefault) || updates.globalDefault < -1) {
@@ -89,6 +95,15 @@ router.patch('/global', (req, res) => {
       if (!cfg.webhooks) cfg.webhooks = {};
       if (updates.webhooks.cleanup !== undefined) cfg.webhooks.cleanup = String(updates.webhooks.cleanup || '');
       if (updates.webhooks.info !== undefined) cfg.webhooks.info = String(updates.webhooks.info || '');
+      if (updates.webhooks.cleanupColor !== undefined) cfg.webhooks.cleanupColor = String(updates.webhooks.cleanupColor || '#238636');
+      if (updates.webhooks.infoColor !== undefined) cfg.webhooks.infoColor = String(updates.webhooks.infoColor || '#f39c12');
+    }
+    if (updates.scheduleEnabled !== undefined) cfg.scheduleEnabled = !!updates.scheduleEnabled;
+    if (updates.display !== undefined && typeof updates.display === 'object') {
+      if (!cfg.display) cfg.display = {};
+      if (updates.display.timeFormat !== undefined) {
+        cfg.display.timeFormat = ['12h', '24h'].includes(updates.display.timeFormat) ? updates.display.timeFormat : '24h';
+      }
     }
 
     // Write to disk (strip internal keys)
@@ -98,8 +113,8 @@ router.patch('/global', (req, res) => {
     fs.renameSync(tmpPath, bot.CONFIG_PATH);
     bot.fixOwnership(bot.CONFIG_PATH);
 
-    // Re-setup cron if schedule or timezone changed (live update, no restart needed)
-    if (updates.schedule !== undefined || updates.timezone !== undefined) {
+    // Re-setup cron if schedule, timezone, or enabled state changed (live update, no restart needed)
+    if (updates.schedule !== undefined || updates.timezone !== undefined || updates.scheduleEnabled !== undefined) {
       bot.setupCron();
     }
 
@@ -129,7 +144,9 @@ router.post('/test-webhook', async (req, res) => {
       description: type === 'cleanup'
         ? 'This is a test message from PurgeBot. Cleanup summaries will appear here after each run.'
         : 'This is a test message from PurgeBot. Auto-discovery notifications will appear here when new channels are found.',
-      color: type === 'cleanup' ? 0x238636 : 0xf39c12,
+      color: type === 'cleanup'
+        ? (parseInt((bot.config.webhooks?.cleanupColor || '#238636').replace('#', ''), 16) || 0x238636)
+        : (parseInt((bot.config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12),
       footer: { text: 'PurgeBot' },
       timestamp: new Date().toISOString(),
     };
