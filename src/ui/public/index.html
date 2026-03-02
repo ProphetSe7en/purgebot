@@ -341,45 +341,45 @@
     </button>
     <div x-show="configSections.cleanup" x-collapse>
       <div class="px-5 pb-4 space-y-0 divide-y divide-gh-border border-t border-gh-border">
-        <div class="flex items-center justify-between py-3">
-          <div>
+        <div class="flex items-start gap-4 py-3">
+          <div class="w-64 shrink-0">
             <div class="text-sm">Dry Run (Global)</div>
-            <div class="text-xs text-gh-dim">When ON: scheduled runs and Overview tab runs only simulate — no messages are deleted</div>
-            <div class="text-xs text-gh-dim mt-0.5">The Cleanup tab has its own Dry Run / Live toggle that overrides this setting per run</div>
+            <div class="text-xs text-gh-dim">Scheduled and Overview tab runs only simulate</div>
+            <div class="text-xs text-gh-dim mt-0.5">Cleanup tab has its own toggle that overrides this</div>
           </div>
           <button @click="editConfig.dryRun = !editConfig.dryRun; configDirty = true"
-            class="w-10 h-5 rounded-full relative transition-colors shrink-0 ml-4"
+            class="w-10 h-5 rounded-full relative transition-colors shrink-0 mt-0.5"
             :class="editConfig.dryRun ? 'bg-blue-600' : 'bg-gh-border2'">
             <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
               :class="editConfig.dryRun ? 'left-5' : 'left-0.5'"></span>
           </button>
         </div>
-        <div class="flex items-center justify-between py-3">
-          <div><div class="text-sm">Global Default Retention</div><div class="text-xs text-gh-dim">Delete messages older than this many days. Use -1 to never delete, 0 to delete all</div></div>
+        <div class="flex items-center gap-4 py-3">
+          <div class="w-64 shrink-0"><div class="text-sm">Global Default Retention</div><div class="text-xs text-gh-dim">Days to keep. -1 = never, 0 = delete all</div></div>
           <div class="flex items-center gap-2">
             <input type="number" x-model.number="editConfig.globalDefault" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="-1">
             <span class="text-xs text-gh-dim">days</span>
           </div>
         </div>
-        <div class="flex items-center justify-between py-3">
-          <div><div class="text-sm">Skip Pinned Messages</div><div class="text-xs text-gh-dim">Never delete pinned messages</div></div>
+        <div class="flex items-center gap-4 py-3">
+          <div class="w-64 shrink-0"><div class="text-sm">Skip Pinned Messages</div><div class="text-xs text-gh-dim">Never delete pinned messages</div></div>
           <button @click="editConfig.discord.skipPinned = !editConfig.discord.skipPinned; configDirty = true"
-            class="w-10 h-5 rounded-full relative transition-colors"
+            class="w-10 h-5 rounded-full relative transition-colors shrink-0"
             :class="editConfig.discord.skipPinned ? 'bg-blue-600' : 'bg-gh-border2'">
             <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
               :class="editConfig.discord.skipPinned ? 'left-5' : 'left-0.5'"></span>
           </button>
         </div>
-        <div class="flex items-center justify-between py-3">
-          <div><div class="text-sm">Max Messages Per Channel</div><div class="text-xs text-gh-dim">How many messages to scan per channel each run</div></div>
+        <div class="flex items-center gap-4 py-3">
+          <div class="w-64 shrink-0"><div class="text-sm">Max Messages Per Channel</div><div class="text-xs text-gh-dim">How many messages to scan per channel each run</div></div>
           <input type="number" x-model.number="editConfig.discord.maxMessagesPerChannel" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="1">
         </div>
-        <div class="flex items-center justify-between py-3">
-          <div><div class="text-sm">Max Old Deletes Per Channel</div><div class="text-xs text-gh-dim">Messages older than 14 days are deleted individually (slow). Set to 0 to skip</div></div>
+        <div class="flex items-center gap-4 py-3">
+          <div class="w-64 shrink-0"><div class="text-sm">Max Old Deletes Per Channel</div><div class="text-xs text-gh-dim">Messages >14 days deleted individually. 0 = skip</div></div>
           <input type="number" x-model.number="editConfig.discord.maxOldDeletesPerChannel" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="0">
         </div>
-        <div class="flex items-center justify-between py-3">
-          <div><div class="text-sm">Delay Between Channels</div><div class="text-xs text-gh-dim">Pause between processing each channel to avoid rate limits</div></div>
+        <div class="flex items-center gap-4 py-3">
+          <div class="w-64 shrink-0"><div class="text-sm">Delay Between Channels</div><div class="text-xs text-gh-dim">Rate limit protection between channels</div></div>
           <div class="flex items-center gap-2">
             <input type="number" x-model.number="editConfig.discord.delayBetweenChannels" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-24 text-right focus:border-gh-blue outline-none" min="0">
             <span class="text-xs text-gh-dim">ms</span>
@@ -398,8 +398,8 @@
     <div x-show="configSections.discord" x-collapse>
       <div class="px-5 pb-4 space-y-0 divide-y divide-gh-border border-t border-gh-border">
         <div class="py-3">
-          <div class="flex items-center justify-between gap-4 mb-2">
-            <div class="shrink-0"><div class="text-sm">Cleanup Webhook</div><div class="text-xs text-gh-dim">Cleanup summary embeds after each run</div></div>
+          <div class="flex items-center gap-4 mb-2">
+            <div class="w-64 shrink-0"><div class="text-sm">Cleanup Webhook</div><div class="text-xs text-gh-dim">Cleanup summary embeds after each run</div></div>
             <button @click="testWebhook('cleanup')" :disabled="!editConfig.webhooks?.cleanup || webhookTesting === 'cleanup'"
               class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
               :class="webhookTesting === 'cleanup' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
@@ -413,8 +413,8 @@
           </div>
         </div>
         <div class="py-3">
-          <div class="flex items-center justify-between gap-4 mb-2">
-            <div class="shrink-0"><div class="text-sm">Info Webhook</div><div class="text-xs text-gh-dim">Auto-discovery notifications (new channels found)</div></div>
+          <div class="flex items-center gap-4 mb-2">
+            <div class="w-64 shrink-0"><div class="text-sm">Info Webhook</div><div class="text-xs text-gh-dim">Auto-discovery notifications (new channels found)</div></div>
             <button @click="testWebhook('info')" :disabled="!editConfig.webhooks?.info || webhookTesting === 'info'"
               class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
               :class="webhookTesting === 'info' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
@@ -427,10 +427,10 @@
             <input x-model="editConfig.webhooks.infoColor" @input="configDirty = true" class="px-2 py-1 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-xs w-24 font-mono focus:border-gh-blue outline-none" placeholder="#f39c12">
           </div>
         </div>
-        <div class="flex items-center justify-between py-3">
-          <div><div class="text-sm">Webhook Discovery</div><div class="text-xs text-gh-dim">Show Webhooks tab — lists all Discord webhooks on the server</div></div>
+        <div class="flex items-center gap-4 py-3">
+          <div class="w-64 shrink-0"><div class="text-sm">Webhook Discovery</div><div class="text-xs text-gh-dim">Show Webhooks tab — lists all server webhooks</div></div>
           <button @click="editConfig.webhooks.discovery = !editConfig.webhooks.discovery; configDirty = true"
-            class="w-10 h-5 rounded-full relative transition-colors shrink-0 ml-4"
+            class="w-10 h-5 rounded-full relative transition-colors shrink-0"
             :class="editConfig.webhooks?.discovery ? 'bg-blue-600' : 'bg-gh-border2'">
             <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
               :class="editConfig.webhooks?.discovery ? 'left-5' : 'left-0.5'"></span>
@@ -448,15 +448,15 @@
     </button>
     <div x-show="configSections.display" x-collapse>
       <div class="px-5 pb-4 space-y-0 divide-y divide-gh-border border-t border-gh-border">
-        <div class="flex items-center justify-between py-3">
-          <div><div class="text-sm">Time Format</div><div class="text-xs text-gh-dim">How timestamps are displayed in the UI</div></div>
+        <div class="flex items-center gap-4 py-3">
+          <div class="w-64 shrink-0"><div class="text-sm">Time Format</div><div class="text-xs text-gh-dim">How timestamps are displayed in the UI</div></div>
           <select x-model="editConfig.display.timeFormat" @change="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm focus:border-gh-blue outline-none">
             <option value="24h">24-hour (14:30)</option>
             <option value="12h">12-hour (2:30 PM)</option>
           </select>
         </div>
-        <div class="flex items-center justify-between py-3">
-          <div><div class="text-sm">Log Retention</div><div class="text-xs text-gh-dim">Days to keep log files</div></div>
+        <div class="flex items-center gap-4 py-3">
+          <div class="w-64 shrink-0"><div class="text-sm">Log Retention</div><div class="text-xs text-gh-dim">Days to keep log files</div></div>
           <div class="flex items-center gap-2">
             <input type="number" x-model.number="editConfig.logging.maxDays" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="1">
             <span class="text-xs text-gh-dim">days</span>
