@@ -98,6 +98,7 @@ router.patch('/global', (req, res) => {
       if (updates.webhooks.info !== undefined) cfg.webhooks.info = String(updates.webhooks.info || '');
       if (updates.webhooks.cleanupColor !== undefined) cfg.webhooks.cleanupColor = String(updates.webhooks.cleanupColor || '#238636');
       if (updates.webhooks.infoColor !== undefined) cfg.webhooks.infoColor = String(updates.webhooks.infoColor || '#f39c12');
+      if (updates.webhooks.discovery !== undefined) cfg.webhooks.discovery = !!updates.webhooks.discovery;
     }
     if (updates.scheduleEnabled !== undefined) cfg.scheduleEnabled = !!updates.scheduleEnabled;
     if (updates.display !== undefined && typeof updates.display === 'object') {

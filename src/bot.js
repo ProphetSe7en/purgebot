@@ -49,6 +49,7 @@ function loadConfig(exitOnError = true) {
     parsed.webhooks = parsed.webhooks || {};
     parsed.webhooks.cleanupColor = parsed.webhooks.cleanupColor || '#238636';
     parsed.webhooks.infoColor = parsed.webhooks.infoColor || '#f39c12';
+    parsed.webhooks.discovery = !!parsed.webhooks.discovery;
     parsed.scheduleEnabled = parsed.scheduleEnabled !== false;
     parsed.display = parsed.display || {};
     parsed.display.timeFormat = parsed.display.timeFormat || '24h';
@@ -296,6 +297,57 @@ async function sendWebhook(embeds) {
   }
 }
 
+async function sendSummaryNotification(runStats) {
+  const webhookUrl = config.webhooks.info;
+  if (!webhookUrl) return;
+  if (runStats.dryRun) return;
+  if (runStats.totalPurged === 0 && runStats.totalErrors === 0) return;
+
+  const infoColor = parseInt((config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12;
+  const catCount = Object.keys(runStats.categories || {}).length;
+  const fields = [
+    { name: 'Channels Processed', value: `${runStats.totalProcessed}`, inline: true },
+    { name: 'Messages Deleted', value: `${runStats.totalPurged}`, inline: true },
+    { name: 'Errors', value: `${runStats.totalErrors}`, inline: true },
+    { name: 'Duration', value: formatDuration(runStats.duration), inline: true },
+    { name: 'Categories', value: `${catCount}`, inline: true },
+  ];
+  if (runStats.cancelled) {
+    fields.push({ name: 'Status', value: 'Cancelled (partial run)', inline: true });
+  }
+
+  const embed = {
+    title: `Cleanup Summary${runStats.cancelled ? ' (Stopped)' : ''}`,
+    fields,
+    color: runStats.totalErrors > 0 ? 0xe74c3c : infoColor,
+    footer: { text: `Trigger: ${runStats.trigger || 'schedule'}` },
+    timestamp: runStats.timestamp,
+  };
+
+  try {
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ embeds: [embed] }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      log('WARN', `Summary webhook response: ${res.status} — ${body}`);
+    }
+  } catch (err) {
+    log('ERROR', `Summary webhook failed: ${err.message}`);
+  }
+}
+
+function formatDuration(ms) {
+  if (!ms) return '0s';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem > 0 ? `${m}m ${rem}s` : `${m}m`;
+}
+
 // (#14) Truncate embed description to stay within Discord's 4096 char limit
 function buildCategoryEmbed(catName, channelResults, hasErrors, isDryRun) {
   const prefix = isDryRun ? 'Dry Run — ' : '';
@@ -462,7 +514,7 @@ async function sendDiscoveryNotification(discoveries) {
 
 const STATS_PATH = path.join(path.dirname(CONFIG_PATH), 'stats.json');
 
-function persistStats(lastRun) {
+function persistStats(lastRun, { partial = false } = {}) {
   try {
     let data = { lastRun: null, history: [] };
     if (fs.existsSync(STATS_PATH)) {
@@ -471,6 +523,16 @@ function persistStats(lastRun) {
     data.lastRun = lastRun;
     if (!lastRun.dryRun) {
       data.lastLiveRun = lastRun;
+    }
+
+    // Partial (incremental) saves only update lastRun/lastLiveRun for crash recovery
+    // History, lifetime, and per-category/channel totals are only updated on the final call
+    if (partial) {
+      const tmpPath = STATS_PATH + '.tmp';
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+      fs.renameSync(tmpPath, STATS_PATH);
+      fixOwnership(STATS_PATH);
+      return;
     }
 
     // Build per-category summary for this history entry
@@ -544,6 +606,7 @@ function persistStats(lastRun) {
 // (#9) Guard against concurrent cleanup runs
 let cleanupRunning = false;
 let cleanupCancelled = false;
+let cleanupStartTime = null;
 
 async function runCleanup(options = {}) {
   const { forceDryRun = false, forceLive = false, categoryFilter = null, channelFilter = null, trigger = 'schedule' } = options;
@@ -554,6 +617,7 @@ async function runCleanup(options = {}) {
   }
   cleanupRunning = true;
   cleanupCancelled = false;
+  cleanupStartTime = Date.now();
 
   const startTime = Date.now();
   let effectiveDryRun = forceDryRun;
@@ -595,7 +659,6 @@ async function runCleanup(options = {}) {
       categoryChannelMap.get(category.name).push(channel);
     }
 
-    const embeds = [];
     const categoryStats = {};
 
     function emitProgress(data) {
@@ -646,7 +709,7 @@ async function runCleanup(options = {}) {
         channelIndex++;
         totalProcessed++;
         log('INFO', `  Scanning ${catName}/#${chanName} (${channelIndex}/${allowedCount})`);
-        emitProgress({ category: catName, currentChannel: chanName, dryRun: effectiveDryRun });
+        emitProgress({ category: catName, currentChannel: chanName, channelIndex, channelCount: allowedCount, dryRun: effectiveDryRun });
 
         const retention = getRetention(catName, chanName);
         const retentionSource = getRetentionSource(catName, chanName);
@@ -795,11 +858,23 @@ async function runCleanup(options = {}) {
         channels: channelResults,
       };
 
-      // Build embed only for categories with activity (purged messages or errors)
+      // Send per-category webhook immediately (live runs only)
       const hasPurged = channelResults.some(ch => ch.purged > 0);
-      if (hasPurged || catErrors) {
-        embeds.push(buildCategoryEmbed(catName, channelResults, catErrors, effectiveDryRun));
+      if (!effectiveDryRun && (hasPurged || catErrors)) {
+        const embed = buildCategoryEmbed(catName, channelResults, catErrors, effectiveDryRun);
+        await sendWebhook([embed]);
       }
+
+      // Checkpoint stats after each category for crash recovery (only updates lastRun/lastLiveRun)
+      const partialDuration = Date.now() - startTime;
+      const partialRunStats = {
+        timestamp: new Date().toISOString(),
+        totalProcessed, totalPurged, totalErrors,
+        dryRun: effectiveDryRun, duration: partialDuration, trigger,
+        cancelled: cleanupCancelled,
+        categories: categoryStats,
+      };
+      persistStats(partialRunStats, { partial: true });
     }
 
     // (#5) Summary log — correct count in both modes
@@ -807,12 +882,7 @@ async function runCleanup(options = {}) {
     const action = effectiveDryRun ? 'would delete' : 'deleted';
     log('INFO', `Cleanup ${cancelled ? 'cancelled' : 'complete'}: ${totalProcessed} channels processed, ${totalPurged} messages ${action}, ${totalSkipped} skipped, ${totalErrors} errors`);
 
-    // Send webhook only when there's something to report
-    if (embeds.length > 0) {
-      await sendWebhook(embeds);
-    }
-
-    // Persist stats to stats.json
+    // Persist final stats to stats.json (overwrites incremental data with complete run)
     const duration = Date.now() - startTime;
     const runStats = {
       timestamp: new Date().toISOString(),
@@ -822,6 +892,9 @@ async function runCleanup(options = {}) {
       categories: categoryStats,
     };
     persistStats(runStats);
+
+    // Send summary notification to info webhook (live runs only)
+    await sendSummaryNotification(runStats);
 
     // Notify UI via SSE that cleanup is complete
     logEmitter.emit('cleanup-complete', runStats);
@@ -839,6 +912,8 @@ async function runCleanup(options = {}) {
     });
   } finally {
     cleanupRunning = false;
+    cleanupCancelled = false;
+    cleanupStartTime = null;
   }
 }
 
@@ -1063,10 +1138,73 @@ client.on('error', (err) => {
   log('ERROR', `Discord client error: ${err.message}`);
 });
 
+// --- Webhook Discovery ---
+
+async function fetchGuildWebhooks() {
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (!guild) throw new Error('Guild not available — bot may still be connecting');
+
+  const webhooks = await guild.fetchWebhooks();
+
+  // Build category → channel → webhooks structure
+  const categoryMap = new Map();
+
+  for (const wh of webhooks.values()) {
+    const channel = guild.channels.cache.get(wh.channelId);
+    const channelName = channel?.name || `unknown-${wh.channelId}`;
+    const parentId = channel?.parentId || null;
+    const parent = parentId ? guild.channels.cache.get(parentId) : null;
+    const categoryName = parent?.name || 'Uncategorized';
+    const categoryId = parentId || '__uncategorized__';
+
+    if (!categoryMap.has(categoryId)) {
+      categoryMap.set(categoryId, { name: categoryName, id: categoryId, channels: new Map() });
+    }
+    const cat = categoryMap.get(categoryId);
+    if (!cat.channels.has(wh.channelId)) {
+      cat.channels.set(wh.channelId, { name: channelName, webhooks: [] });
+    }
+    cat.channels.get(wh.channelId).webhooks.push({
+      id: wh.id,
+      name: wh.name,
+      url: wh.url,
+      avatar: wh.avatarURL({ size: 32 }),
+      type: wh.type === 1 ? 'Incoming' : wh.type === 2 ? 'Channel Follower' : wh.type === 3 ? 'Application' : 'Unknown',
+      creator: wh.owner?.username || null,
+      createdAt: wh.createdAt?.toISOString() || null,
+    });
+  }
+
+  // Sort categories alphabetically, Uncategorized last
+  const sorted = [...categoryMap.values()].sort((a, b) => {
+    if (a.id === '__uncategorized__') return 1;
+    if (b.id === '__uncategorized__') return -1;
+    return a.name.localeCompare(b.name);
+  });
+
+  const categories = sorted.map(cat => {
+    const channels = [...cat.channels.values()]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(ch => ({ name: ch.name, webhooks: ch.webhooks }));
+    return {
+      category: cat.name,
+      channelCount: channels.length,
+      webhookCount: channels.reduce((sum, ch) => sum + ch.webhooks.length, 0),
+      channels,
+    };
+  });
+
+  return {
+    total: webhooks.size,
+    categories,
+  };
+}
+
 // --- Module Exports (for UI server) ---
 
 function isCleanupRunning() { return cleanupRunning; }
 function isCleanupCancelling() { return cleanupCancelled; }
+function getCleanupStartTime() { return cleanupStartTime; }
 function cancelCleanup() {
   if (!cleanupRunning) return false;
   cleanupCancelled = true;
@@ -1077,8 +1215,8 @@ function cancelCleanup() {
 module.exports = {
   config, client, logEmitter, loadConfig, runCleanup, syncConfig, setupCron,
   CONFIG_HEADER, CONFIG_PATH, STATS_PATH, fixOwnership, configForDisk, log, LOG_DIR,
-  isCleanupRunning, isCleanupCancelling, cancelCleanup, writeHeartbeat, getConfiguredChannels,
-  getRetention, getRetentionSource, formatRetention,
+  isCleanupRunning, isCleanupCancelling, getCleanupStartTime, cancelCleanup, writeHeartbeat, getConfiguredChannels,
+  getRetention, getRetentionSource, formatRetention, fetchGuildWebhooks,
 };
 
 // --- Main ---

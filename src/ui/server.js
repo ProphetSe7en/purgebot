@@ -6,6 +6,7 @@ const configRoutes = require('./routes/config');
 const statsRoutes = require('./routes/stats');
 const controlRoutes = require('./routes/control');
 const logsRoutes = require('./routes/logs');
+const webhooksRoutes = require('./routes/webhooks');
 
 const UI_PORT = parseInt(process.env.UI_PORT || '3050', 10);
 
@@ -41,6 +42,7 @@ function startServer() {
   app.use('/api/stats', statsRoutes);
   app.use('/api/cleanup', controlRoutes);
   app.use('/api/logs', logsRoutes);
+  app.use('/api/webhooks', webhooksRoutes);
 
   // SPA fallback
   app.get('/', (req, res) => {

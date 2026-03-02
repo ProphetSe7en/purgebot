@@ -61,6 +61,10 @@ webhooks:
   # Hex color for info/discovery embed sidebar (default: orange)
   infoColor: "#f39c12"
 
+  # Show the Webhooks tab — lists all Discord webhooks on the server by category/channel.
+  # Requires the bot to have Manage Webhooks permission.
+  discovery: false
+
 discord:
   # Max messages to scan per channel per run (older messages beyond this are not checked)
   maxMessagesPerChannel: 500

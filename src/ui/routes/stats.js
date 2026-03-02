@@ -40,6 +40,7 @@ router.get('/status', (req, res) => {
     guildName: guild?.name || null,
     cleanupRunning: bot.isCleanupRunning(),
     cleanupCancelling: bot.isCleanupCancelling(),
+    cleanupStartTime: bot.getCleanupStartTime(),
     dryRun: cfg.dryRun ?? false,
     scheduleEnabled: cfg.scheduleEnabled !== false,
     schedule: cfg.schedule || '0 2 * * *',

@@ -35,7 +35,7 @@ Built for servers with many channels (media automation, homelab, development) wh
    - Under **Privileged Gateway Intents**, enable **Message Content Intent**
 4. Go to **OAuth2 > URL Generator**:
    - **Scopes:** select `bot`
-   - **Bot Permissions:** select `Administrator` (simplest — needed for private channels), or at minimum: `View Channels`, `Read Message History`, `Manage Messages`
+   - **Bot Permissions:** select `Administrator` (simplest — needed for private channels), or at minimum: `View Channels`, `Read Message History`, `Manage Messages`, `Manage Webhooks` (for webhook discovery tab)
 5. Copy the generated URL, open it in your browser, select your server, and authorize
 
 > **Finding your Guild ID:** Enable Developer Mode in Discord (Settings > Advanced > Developer Mode), then right-click your server name and click "Copy Server ID". This is your `GUILD_ID`.

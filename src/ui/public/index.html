@@ -64,13 +64,13 @@
       <span class="w-2 h-2 rounded-full bg-gh-yellow"></span> Dry Run
     </span>
     <!-- Running badge + global cancel button -->
-    <span x-show="status.cleanupRunning && !cleanupCancelling" class="inline-flex items-center gap-1.5 rounded-full text-xs font-medium bg-blue-900/30 border border-blue-800">
+    <span x-show="(status.cleanupRunning || cleanupRunning) && !cleanupCancelling" class="inline-flex items-center gap-1.5 rounded-full text-xs font-medium bg-blue-900/30 border border-blue-800">
       <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-gh-blue">
         <span class="w-2 h-2 rounded-full bg-gh-blue pulse-dot"></span> Running
       </span>
       <button @click="cancelCleanup()" class="px-2.5 py-1 text-gh-red hover:bg-red-900/30 rounded-r-full border-l border-blue-800 transition">Stop</button>
     </span>
-    <span x-show="status.cleanupRunning && cleanupCancelling" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-900/30 text-gh-red border border-red-800">
+    <span x-show="(status.cleanupRunning || cleanupRunning) && cleanupCancelling" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-900/30 text-gh-red border border-red-800">
       <span class="w-2 h-2 rounded-full bg-gh-red pulse-dot"></span> Stopping...
     </span>
   </div>
@@ -251,7 +251,8 @@
                 <span class="text-gh-muted">Channels: <strong class="text-gh-blue" x-text="categoryResults[catName].processed"></strong></span>
                 <span class="text-gh-muted"><span x-text="categoryResults[catName].dryRun ? 'Would delete' : 'Deleted'"></span>: <strong class="text-gh-red" x-text="categoryResults[catName].purged"></strong></span>
                 <span class="text-gh-muted">Errors: <strong :class="categoryResults[catName].errors > 0 ? 'text-gh-red' : 'text-gh-green'" x-text="categoryResults[catName].errors"></strong></span>
-                <span class="text-gh-dim" x-text="categoryResults[catName].dryRun ? 'dry-run' : 'live'"></span>
+                <span x-show="categoryResults[catName].dryRun" class="text-[10px] text-gh-yellow bg-yellow-900/30 px-1.5 py-0.5 rounded border border-yellow-800">dry-run</span>
+                <span x-show="!categoryResults[catName].dryRun" class="text-[10px] text-gh-green bg-green-900/30 px-1.5 py-0.5 rounded border border-green-800">live</span>
               </div>
               <template x-for="ch in categoryResults[catName].channels" :key="ch.name">
                 <div class="flex items-center justify-between py-1 text-xs border-b border-gh-bg last:border-b-0">
@@ -425,6 +426,15 @@
             <span class="w-5 h-5 rounded border border-gh-border2 shrink-0" :style="'background:' + (editConfig.webhooks?.infoColor || '#f39c12')"></span>
             <input x-model="editConfig.webhooks.infoColor" @input="configDirty = true" class="px-2 py-1 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-xs w-24 font-mono focus:border-gh-blue outline-none" placeholder="#f39c12">
           </div>
+        </div>
+        <div class="flex items-center justify-between py-3">
+          <div><div class="text-sm">Webhook Discovery</div><div class="text-xs text-gh-dim">Show Webhooks tab — lists all Discord webhooks on the server</div></div>
+          <button @click="editConfig.webhooks.discovery = !editConfig.webhooks.discovery; configDirty = true"
+            class="w-10 h-5 rounded-full relative transition-colors shrink-0 ml-4"
+            :class="editConfig.webhooks?.discovery ? 'bg-blue-600' : 'bg-gh-border2'">
+            <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+              :class="editConfig.webhooks?.discovery ? 'left-5' : 'left-0.5'"></span>
+          </button>
         </div>
       </div>
     </div>
@@ -655,12 +665,12 @@
       </button>
     </div>
     <button x-show="!cleanupRunning" @click="runCleanup()" :disabled="status.cleanupRunning || syncRunning"
-      class="px-4 py-1.5 rounded-md text-white text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+      class="px-3 py-1.5 rounded-md text-white text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
       :class="cleanupMode === 'live' ? 'bg-green-600 hover:bg-green-500' : 'bg-blue-600 hover:bg-blue-500'"
       x-text="cleanupMode === 'live' ? 'Run Cleanup' : 'Run Dry-Run'">
     </button>
     <button x-show="cleanupRunning" @click="cancelCleanup()" :disabled="cleanupCancelling"
-      class="px-4 py-1.5 rounded-md text-white text-sm transition bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed">
+      class="px-3 py-1.5 rounded-md text-white text-xs font-medium transition bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed">
       <span x-show="!cleanupCancelling">Stop</span>
       <span x-show="cleanupCancelling">Stopping...</span>
     </button>
@@ -672,7 +682,12 @@
   <!-- Running indicator -->
   <div x-show="cleanupRunning" class="bg-gh-card border border-gh-border rounded-lg p-4 mb-4 flex items-center gap-3">
     <svg class="animate-spin h-5 w-5" :class="cleanupCancelling ? 'text-gh-red' : 'text-gh-blue'" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-    <span x-show="!cleanupCancelling" class="text-sm text-gh-muted" x-text="cleanupCurrentChannel ? 'Processing #' + cleanupCurrentChannel + '...' : (cleanupMode === 'live' ? 'Cleanup' : 'Dry-run') + ' starting...'"></span>
+    <span x-show="!cleanupCancelling" class="text-sm text-gh-muted">
+      <span x-show="cleanupCurrentChannel">Processing #<span x-text="cleanupCurrentChannel"></span><span x-show="cleanupChannelProgress" class="text-xs text-gh-dim" x-text="' ' + cleanupChannelProgress"></span>...</span>
+      <span x-show="!cleanupCurrentChannel" x-text="(cleanupMode === 'live' ? 'Cleanup' : 'Dry-run') + ' starting...'"></span>
+      <span x-show="cleanupDryRun === true" class="ml-2 text-[10px] text-gh-yellow bg-yellow-900/30 px-1.5 py-0.5 rounded border border-yellow-800">dry-run</span>
+      <span x-show="cleanupDryRun === false" class="ml-2 text-[10px] text-gh-green bg-green-900/30 px-1.5 py-0.5 rounded border border-green-800">live</span>
+    </span>
     <span x-show="cleanupCancelling" class="text-sm text-gh-red">Stopping... finishing current channel</span>
   </div>
 
@@ -682,8 +697,7 @@
       <div><div class="text-xs text-gh-muted">Channels Scanned</div><div class="text-lg font-semibold text-gh-blue mt-0.5" x-text="cleanupResults?.totalProcessed || 0"></div></div>
       <div><div class="text-xs text-gh-muted" x-text="cleanupResults?.dryRun ? 'Would Delete' : 'Deleted'"></div><div class="text-lg font-semibold mt-0.5" :class="cleanupResults?.dryRun ? 'text-gh-blue' : 'text-gh-green'" x-text="cleanupResults?.totalPurged || 0"></div></div>
       <div><div class="text-xs text-gh-muted">Errors</div><div class="text-lg font-semibold mt-0.5" :class="(cleanupResults?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="cleanupResults?.totalErrors || 0"></div></div>
-      <div><div class="text-xs text-gh-muted">Duration</div><div class="text-lg font-semibold text-gh-yellow mt-0.5" x-text="formatDuration(cleanupResults?.duration)"></div></div>
-      <div x-show="cleanupResults?.dryRun" class="flex items-center"><span class="text-xs text-gh-yellow bg-yellow-900/30 px-2 py-0.5 rounded border border-yellow-800">dry-run</span></div>
+      <div><div class="text-xs text-gh-muted">Duration</div><div class="text-lg font-semibold text-gh-yellow mt-0.5" x-text="formatDuration(cleanupRunning && cleanupElapsed != null ? cleanupElapsed : cleanupResults?.duration)"></div></div>
       <div x-show="cleanupResults?.cancelled" class="flex items-center"><span class="text-xs text-gh-red bg-red-900/30 px-2 py-0.5 rounded border border-red-800">stopped</span></div>
       <div class="ml-auto flex items-center gap-2">
         <span class="text-xs text-gh-dim" x-text="cleanupResults?.timestamp ? formatDate(cleanupResults.timestamp) : ''"></span>
@@ -695,12 +709,13 @@
     <div x-show="cleanupExpanded" x-collapse class="border-t border-gh-border p-4 pt-2 space-y-2">
       <template x-for="[catName, catData] in Object.entries(cleanupResults?.categories || {}).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
         <div class="bg-gh-bg rounded-lg p-3">
-          <div class="text-sm font-semibold mb-2 flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full" :class="catData.errors > 0 ? 'bg-gh-red' : 'bg-gh-green'"></span>
+          <div class="text-sm font-semibold mb-2 flex items-baseline gap-2">
+            <span class="w-2 h-2 rounded-full self-center" :class="catData.errors > 0 ? 'bg-gh-red' : 'bg-gh-green'"></span>
             <span x-text="catName"></span>
             <span class="text-xs font-normal"
               :class="catData.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-muted'"
               x-text="catData.purged > 0 ? catData.purged + (cleanupResults.dryRun ? ' to delete' : ' deleted') : 'nothing to delete'"></span>
+            <span class="text-xs font-normal" :class="cleanupResults.dryRun ? 'text-gh-yellow' : 'text-gh-green'" x-text="cleanupResults.dryRun ? 'dry-run' : 'live'"></span>
           </div>
           <template x-for="ch in catData.channels" :key="ch.name">
             <div class="flex items-center justify-between py-1 text-xs border-b border-gh-border last:border-b-0">
@@ -768,6 +783,110 @@
   </template>
 </div>
 
+<!-- ===== WEBHOOKS TAB ===== -->
+<div x-show="tab === 'webhooks'" x-cloak class="p-6">
+  <!-- Header card -->
+  <div class="bg-gh-card border border-gh-border rounded-lg p-5 flex items-center justify-between">
+    <div>
+      <h2 class="text-lg font-semibold">Discord Webhooks</h2>
+      <p class="text-xs text-gh-dim mt-1">All webhooks on this server, grouped by category and channel</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <!-- Show URLs toggle -->
+      <template x-if="webhooksData && webhooksData.total > 0">
+        <button @click="webhooksShowUrls = !webhooksShowUrls"
+          class="px-3 py-2 rounded-md border text-xs transition"
+          :class="webhooksShowUrls ? 'border-gh-blue text-gh-blue' : 'border-gh-border2 text-gh-dim hover:text-gh-muted hover:border-gh-blue'">
+          <span x-text="webhooksShowUrls ? 'Hide URLs' : 'Show URLs'"></span>
+        </button>
+      </template>
+      <!-- Export YAML -->
+      <template x-if="webhooksData && webhooksData.total > 0">
+        <button @click="exportWebhooksYaml()"
+          class="px-3 py-2 rounded-md border border-gh-border2 text-xs text-gh-dim hover:text-gh-muted hover:border-gh-blue transition">
+          Export
+        </button>
+      </template>
+      <!-- Refresh -->
+      <button @click="loadWebhooks()" :disabled="webhooksLoading"
+        class="px-4 py-2 rounded-md border text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
+        :class="webhooksLoading ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'">
+        <span x-text="webhooksLoading ? 'Loading...' : 'Refresh'"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Error state -->
+  <div x-show="webhooksError" x-cloak class="mt-4 bg-red-900/20 border border-red-800 rounded-lg px-5 py-3 text-sm text-gh-red" x-text="webhooksError"></div>
+
+  <!-- Results -->
+  <template x-if="webhooksData">
+    <div class="mt-4 space-y-3">
+      <!-- Summary -->
+      <div class="text-xs text-gh-dim" x-text="webhooksData.total + ' webhook' + (webhooksData.total !== 1 ? 's' : '') + ' across ' + webhooksData.categories.length + ' categor' + (webhooksData.categories.length !== 1 ? 'ies' : 'y')"></div>
+
+      <!-- Empty state -->
+      <div x-show="webhooksData.total === 0" class="bg-gh-card border border-gh-border rounded-lg p-8 text-center text-gh-dim text-sm">No webhooks found on this server</div>
+
+      <!-- Category cards -->
+      <template x-for="(cat, ci) in webhooksData.categories" :key="ci">
+        <div class="bg-gh-card border border-gh-border rounded-lg overflow-hidden">
+          <button @click="webhooksExpanded.includes(ci) ? webhooksExpanded = webhooksExpanded.filter(x => x !== ci) : webhooksExpanded.push(ci)"
+            class="w-full flex items-center justify-between px-5 py-3 hover:bg-gh-bg/50 transition cursor-pointer">
+            <div class="flex items-center gap-3">
+              <h3 class="text-sm font-semibold" x-text="cat.category"></h3>
+              <span class="text-xs text-gh-dim" x-text="cat.webhookCount + ' webhook' + (cat.webhookCount !== 1 ? 's' : '') + ' in ' + cat.channelCount + ' channel' + (cat.channelCount !== 1 ? 's' : '')"></span>
+            </div>
+            <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="webhooksExpanded.includes(ci) && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </button>
+          <div x-show="webhooksExpanded.includes(ci)" x-collapse>
+            <div class="border-t border-gh-border divide-y divide-gh-border">
+              <template x-for="(ch, chi) in cat.channels" :key="chi">
+                <div class="px-5 py-3">
+                  <div class="text-xs font-medium text-gh-muted mb-2" x-text="'#' + ch.name"></div>
+                  <div class="space-y-2">
+                    <template x-for="(wh, wi) in ch.webhooks" :key="wh.id">
+                      <div>
+                        <div class="flex items-center gap-3">
+                          <!-- Avatar -->
+                          <template x-if="wh.avatar">
+                            <img :src="wh.avatar" :alt="wh.name" class="w-7 h-7 rounded-full shrink-0">
+                          </template>
+                          <template x-if="!wh.avatar">
+                            <div class="w-7 h-7 rounded-full bg-gh-border2 flex items-center justify-center shrink-0">
+                              <svg class="w-3.5 h-3.5 text-gh-dim" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                            </div>
+                          </template>
+                          <!-- Name + copy -->
+                          <span class="text-sm font-medium truncate" x-text="wh.name"></span>
+                          <button @click="copyWebhookUrl(wh.url, wh.name)"
+                            class="shrink-0 text-gh-dim hover:text-gh-blue transition" title="Copy webhook URL">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                          </button>
+                          <!-- Creator + date -->
+                          <span class="text-xs text-gh-dim">
+                            <span x-show="wh.creator" x-text="wh.creator"></span>
+                            <span x-show="wh.creator && wh.createdAt"> &middot; </span>
+                            <span x-show="wh.createdAt" x-text="formatDate(wh.createdAt)"></span>
+                          </span>
+                        </div>
+                        <!-- URL (toggled) -->
+                        <div x-show="webhooksShowUrls" class="ml-10 mt-1">
+                          <span class="text-xs text-gh-dim font-mono break-all select-all" x-text="wh.url"></span>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </template>
+</div>
+
 <!-- Toast notifications -->
 <div x-show="toast" x-transition class="fixed bottom-6 right-6 px-4 py-2 rounded-lg text-sm font-medium shadow-lg z-50"
   :class="toastType === 'error' ? 'bg-red-900 text-gh-red border border-red-800' : 'bg-green-900 text-gh-green border border-green-800'"
@@ -789,8 +908,9 @@ function app() {
       { id: 'overview', label: 'Overview' },
       { id: 'cleanup', label: 'Cleanup' },
       { id: 'sync', label: 'Sync' },
+      { id: 'webhooks', label: 'Webhooks' },
       { id: 'statistics', label: 'Statistics' },
-      { id: 'config', label: 'Configuration' },
+      { id: 'config', label: 'Settings' },
       { id: 'schedule', label: 'Schedule' },
       { id: 'logs', label: 'Logs', badge: 'Live' },
     ],
@@ -805,6 +925,11 @@ function app() {
     openCategories: [],
     syncRunning: false,
     syncResults: null,
+    webhooksData: null,
+    webhooksLoading: false,
+    webhooksError: null,
+    webhooksExpanded: [],
+    webhooksShowUrls: false,
     showCategoryList: false,
     categoryRunning: {},
     categoryResults: {},
@@ -816,6 +941,11 @@ function app() {
     cleanupRunning: false,
     cleanupCancelling: false,
     cleanupCurrentChannel: null,
+    cleanupChannelProgress: null,
+    cleanupDryRun: null,
+    cleanupStartTime: null,
+    cleanupElapsed: null,
+    cleanupTimer: null,
     cleanupLastRun: '',
     cleanupMode: 'dryrun',
     cleanupExpanded: true,
@@ -848,7 +978,10 @@ function app() {
       await Promise.all([this.loadStatus(), this.loadStats(), this.loadConfig()]);
       // Show last run results in Cleanup tab (survives page refresh)
       // Don't load stale lastRun if a cleanup is currently active — progress events will build it
-      if (this.stats.lastRun && !this.status.cleanupRunning) this.cleanupResults = this.stats.lastRun;
+      if (this.stats.lastRun && !this.status.cleanupRunning) {
+        this.cleanupResults = this.stats.lastRun;
+        this.cleanupLastRun = this.stats.lastRun.timestamp || '';
+      }
       this.scheduleEdit = { schedule: this.status.schedule || '0 2 * * *' };
       this.connectSSE();
       this.loadLogs();
@@ -864,6 +997,15 @@ function app() {
       this.$watch('tab', (newTab, oldTab) => {
         if (oldTab === 'statistics') this.destroyStatsCharts();
         if (newTab === 'statistics') this.$nextTick(() => this.initStatsCharts());
+        if (newTab === 'webhooks' && !this.webhooksData && !this.webhooksLoading) this.loadWebhooks();
+      });
+      // Redirect away from webhooks tab if discovery is toggled off + clear stale data
+      this.$watch('editConfig.webhooks.discovery', (val) => {
+        if (!val) {
+          if (this.tab === 'webhooks') this.tab = 'overview';
+          this.webhooksData = null;
+          this.webhooksExpanded = [];
+        }
       });
     },
 
@@ -882,12 +1024,16 @@ function app() {
           // Sync local running/cancelling state with server (survives page refresh)
           if (this.status.cleanupRunning) {
             this.cleanupRunning = true;
+            if (!this.cleanupTimer) {
+              this.cleanupResults = null;
+              this.startCleanupTimer(this.status.cleanupStartTime);
+            }
             if (this.status.cleanupCancelling) this.cleanupCancelling = true;
           } else if (this.cleanupRunning) {
             // Server says done but we still think it's running — reset
-            this.cleanupRunning = false;
+            this.cleanupRunning = false; this.stopCleanupTimer();
             this.cleanupCancelling = false;
-            this.cleanupCurrentChannel = null;
+            this.cleanupCurrentChannel = null; this.cleanupChannelProgress = null; this.cleanupDryRun = null;
             // Clear stuck categoryRunning flags (SSE disconnect fallback)
             if (Object.keys(this.categoryRunning).length > 0) this.categoryRunning = {};
           }
@@ -910,6 +1056,7 @@ function app() {
           cfg.webhooks = cfg.webhooks || {};
           cfg.webhooks.cleanupColor = cfg.webhooks.cleanupColor || '#238636';
           cfg.webhooks.infoColor = cfg.webhooks.infoColor || '#f39c12';
+          cfg.webhooks.discovery = !!cfg.webhooks.discovery;
           cfg.scheduleEnabled = cfg.scheduleEnabled !== false;
           cfg.display = cfg.display || {};
           cfg.display.timeFormat = cfg.display.timeFormat || '24h';
@@ -961,10 +1108,72 @@ function app() {
         this.webhookTesting = null;
       }
     },
+    async loadWebhooks() {
+      this.webhooksLoading = true;
+      this.webhooksError = null;
+      try {
+        const r = await fetch('/api/webhooks');
+        if (r.ok) {
+          this.webhooksData = await r.json();
+          // Auto-expand all categories on first load
+          this.webhooksExpanded = this.webhooksData.categories.map((_, i) => i);
+          this.showToast(`Found ${this.webhooksData.total} webhook${this.webhooksData.total !== 1 ? 's' : ''}`);
+        } else {
+          const data = await r.json().catch(() => ({}));
+          this.webhooksError = data.error || `Failed to fetch webhooks (HTTP ${r.status})`;
+        }
+      } catch (err) {
+        this.webhooksError = 'Failed to fetch webhooks: ' + err.message;
+      } finally {
+        this.webhooksLoading = false;
+      }
+    },
+    exportWebhooksYaml() {
+      if (!this.webhooksData) return;
+      let yaml = '';
+      for (const cat of this.webhooksData.categories) {
+        yaml += cat.category + ':\n';
+        for (const ch of cat.channels) {
+          for (const wh of ch.webhooks) {
+            const label = ch.webhooks.length > 1 ? ch.name + ' (' + wh.name + ')' : ch.name;
+            yaml += '  ' + label + ': ' + wh.url + '\n';
+          }
+        }
+        yaml += '\n';
+      }
+      const blob = new Blob([yaml.trimEnd() + '\n'], { type: 'text/yaml' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'webhooks.yml';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      this.showToast('Exported webhooks.yml');
+    },
+    async copyWebhookUrl(url, name) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(url);
+        } else {
+          // Fallback for HTTP contexts
+          const ta = document.createElement('textarea');
+          ta.value = url;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        this.showToast(`Copied URL for "${name}"`);
+      } catch {
+        this.showToast('Failed to copy URL', 'error');
+      }
+    },
     async runCleanup() {
       this.cleanupRunning = true;
       this.cleanupResults = null;
-      this.cleanupCurrentChannel = null;
+      this.cleanupCurrentChannel = null; this.cleanupChannelProgress = null; this.cleanupDryRun = null;
+      this.startCleanupTimer();
       try {
         const endpoint = this.cleanupMode === 'live' ? '/api/cleanup/run' : '/api/cleanup/dryrun';
         const body = this.cleanupCategory ? { category: this.cleanupCategory } : {};
@@ -980,11 +1189,11 @@ function app() {
         } else {
           const data = await r.json();
           this.showToast(data.error || 'Failed', 'error');
-          this.cleanupRunning = false;
+          this.cleanupRunning = false; this.stopCleanupTimer();
         }
       } catch (err) {
         this.showToast('Failed: ' + err.message, 'error');
-        this.cleanupRunning = false;
+        this.cleanupRunning = false; this.stopCleanupTimer();
       }
     },
     async cancelCleanup() {
@@ -1002,6 +1211,16 @@ function app() {
         this.showToast('Stop failed: ' + err.message, 'error');
         this.cleanupCancelling = false;
       }
+    },
+    startCleanupTimer(serverStartTime) {
+      this.cleanupStartTime = serverStartTime || Date.now();
+      this.cleanupElapsed = Date.now() - this.cleanupStartTime;
+      if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+      this.cleanupTimer = setInterval(() => { this.cleanupElapsed = Date.now() - this.cleanupStartTime; }, 1000);
+    },
+    stopCleanupTimer() {
+      if (this.cleanupTimer) { clearInterval(this.cleanupTimer); this.cleanupTimer = null; }
+      this.cleanupElapsed = null;
     },
     async syncChannels() {
       this.syncRunning = true;
@@ -1039,15 +1258,16 @@ function app() {
           const cleared = { ...this.categoryResults }; delete cleared[catName]; this.categoryResults = cleared;
           this.categoryRunning = { ...this.categoryRunning, [catName]: true };
           this.cleanupRunning = true;
+          this.startCleanupTimer();
           if (!this.openCategories.includes(catName)) this.openCategories.push(catName);
           this.showToast(`${this.status.dryRun ? 'Dry-run' : 'Cleanup'} started for ${catName}`);
         } else {
           this.showToast(data.error || 'Failed', 'error');
-          this.cleanupRunning = false;
+          this.cleanupRunning = false; this.stopCleanupTimer();
         }
       } catch (err) {
         this.showToast('Failed: ' + err.message, 'error');
-        this.cleanupRunning = false;
+        this.cleanupRunning = false; this.stopCleanupTimer();
       }
     },
     async runChannel(catName, chName) {
@@ -1063,15 +1283,16 @@ function app() {
           const cleared = { ...this.categoryResults }; delete cleared[catName]; this.categoryResults = cleared;
           this.categoryRunning = { ...this.categoryRunning, [catName]: true };
           this.cleanupRunning = true;
+          this.startCleanupTimer();
           if (!this.openCategories.includes(catName)) this.openCategories.push(catName);
           this.showToast(`${this.status.dryRun ? 'Dry-run' : 'Cleanup'} started for #${chName}`);
         } else {
           this.showToast(data.error || 'Failed', 'error');
-          this.cleanupRunning = false;
+          this.cleanupRunning = false; this.stopCleanupTimer();
         }
       } catch (err) {
         this.showToast('Failed: ' + err.message, 'error');
-        this.cleanupRunning = false;
+        this.cleanupRunning = false; this.stopCleanupTimer();
       }
     },
     // Per-category/channel run results now arrive via SSE cleanup-complete event
@@ -1132,6 +1353,18 @@ function app() {
           if (!data.channel) {
             // Scanning event — update current channel indicator
             this.cleanupCurrentChannel = data.currentChannel || null;
+            this.cleanupChannelProgress = data.channelIndex && data.channelCount ? `${data.channelIndex}/${data.channelCount}` : null;
+            if (data.dryRun !== undefined) this.cleanupDryRun = data.dryRun;
+            // Create category entry immediately so it appears in live view
+            if (data.category) {
+              if (!this.cleanupResults) {
+                this.cleanupResults = { totalProcessed: 0, totalPurged: 0, totalErrors: 0, dryRun: data.dryRun, categories: {} };
+              }
+              if (!this.cleanupResults.categories[data.category]) {
+                this.cleanupResults.categories[data.category] = { processed: 0, purged: 0, errors: 0, channels: [] };
+                this.cleanupResults = { ...this.cleanupResults };
+              }
+            }
           } else {
             // Channel result — build up cleanupResults incrementally
             if (!this.cleanupResults) {
@@ -1160,9 +1393,9 @@ function app() {
           // Update Cleanup tab — authoritative final data replaces progressive state
           this.cleanupResults = stats;
           this.cleanupLastRun = new Date().toISOString();
-          this.cleanupRunning = false;
+          this.cleanupRunning = false; this.stopCleanupTimer();
           this.cleanupCancelling = false;
-          this.cleanupCurrentChannel = null;
+          this.cleanupCurrentChannel = null; this.cleanupChannelProgress = null; this.cleanupDryRun = null;
           // Update per-category results in Overview tab
           if (stats.categories) {
             for (const [catName, catData] of Object.entries(stats.categories)) {
@@ -1452,7 +1685,10 @@ function app() {
 
     // --- Computed ---
     get visibleTabs() {
-      return this.tabs;
+      return this.tabs.filter(t => {
+        if (t.id === 'webhooks') return this.editConfig.webhooks?.discovery === true;
+        return true;
+      });
     },
     get topChannels() {
       if (!this.stats.lastRun?.categories) return [];
