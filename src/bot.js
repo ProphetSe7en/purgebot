@@ -105,16 +105,23 @@ function writeHeartbeat() {
 
 const LOG_DIR = path.join(path.dirname(CONFIG_PATH), 'logs');
 
+function localNow() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return { date, time, datetime: `${date} ${time}` };
+}
+
 function getLogFile() {
-  const date = new Date().toISOString().split('T')[0];
-  return path.join(LOG_DIR, `purgebot-${date}.log`);
+  return path.join(LOG_DIR, `purgebot-${localNow().date}.log`);
 }
 
 // Track ownership: only mkdir/chown once per log file (resets on date rollover)
 let lastLogFileOwned = '';
 
 function log(level, msg) {
-  const ts = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+  const ts = localNow().datetime;
   const line = `[${ts}] [${level}] ${msg}`;
   console.log(line);
   logEmitter.emit('log', { timestamp: ts, level, message: msg });
