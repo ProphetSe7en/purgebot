@@ -312,23 +312,24 @@ async function sendSummaryNotification(runStats) {
 
   const infoColor = parseInt((config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12;
   const catCount = Object.keys(runStats.categories || {}).length;
-  const fields = [
-    { name: 'Channels Processed', value: `${runStats.totalProcessed}`, inline: true },
-    { name: 'Messages Deleted', value: `${runStats.totalPurged}`, inline: true },
-    { name: 'Errors', value: `${runStats.totalErrors}`, inline: true },
-    { name: 'Duration', value: formatDuration(runStats.duration), inline: true },
-    { name: 'Categories', value: `${catCount}`, inline: true },
-  ];
+  const trigger = (runStats.trigger || 'schedule').charAt(0).toUpperCase() + (runStats.trigger || 'schedule').slice(1);
+  const titleSuffix = runStats.cancelled ? 'Stopped' : 'Complete';
+  const version = require('../package.json').version;
+
+  let description = `Deleted **${runStats.totalPurged}** messages from **${runStats.totalProcessed}** channels (${catCount} categories) in **${formatDuration(runStats.duration)}**`;
+  if (runStats.totalErrors > 0) {
+    description += `\n⚠ ${runStats.totalErrors} error${runStats.totalErrors !== 1 ? 's' : ''}`;
+  }
   if (runStats.cancelled) {
-    fields.push({ name: 'Status', value: 'Cancelled (partial run)', inline: true });
+    description += `\n⚠ Cancelled (partial run)`;
   }
 
   const embed = {
-    title: `Cleanup Summary${runStats.cancelled ? ' (Stopped)' : ''}`,
-    fields,
+    title: `Cleanup ${titleSuffix} · ${trigger} Run`,
+    description,
     color: runStats.totalErrors > 0 ? 0xe74c3c : infoColor,
-    footer: { text: `Trigger: ${runStats.trigger || 'schedule'}` },
-    timestamp: runStats.timestamp,
+    footer: { text: `PurgeBot v${version} by ProphetSe7en` },
+    timestamp: new Date().toISOString(),
   };
 
   try {
