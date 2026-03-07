@@ -149,7 +149,7 @@ router.post('/test-webhook', async (req, res) => {
       color: type === 'cleanup'
         ? (parseInt((bot.config.webhooks?.cleanupColor || '#238636').replace('#', ''), 16) || 0x238636)
         : (parseInt((bot.config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12),
-      footer: { text: 'PurgeBot' },
+      footer: { text: `PurgeBot v${require('../../package.json').version} by ProphetSe7en` },
       timestamp: new Date().toISOString(),
     };
 

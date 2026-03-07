@@ -12,6 +12,8 @@ logEmitter.setMaxListeners(50); // Allow many SSE clients
 // Set umask early — ensures correct permissions even via docker exec (which skips entrypoint)
 process.umask(parseInt(process.env.UMASK || '002', 8));
 
+const version = require('../package.json').version;
+
 // --- Configuration ---
 
 const CONFIG_PATH = process.env.CONFIG_PATH || '/config/config.yaml';
@@ -314,8 +316,6 @@ async function sendSummaryNotification(runStats) {
   const catCount = Object.keys(runStats.categories || {}).length;
   const trigger = (runStats.trigger || 'schedule').charAt(0).toUpperCase() + (runStats.trigger || 'schedule').slice(1);
   const titleSuffix = runStats.cancelled ? 'Stopped' : 'Complete';
-  const version = require('../package.json').version;
-
   let description = `Deleted **${runStats.totalPurged}** messages from **${runStats.totalProcessed}** channels (${catCount} categories) in **${formatDuration(runStats.duration)}**`;
   if (runStats.totalErrors > 0) {
     description += `\n⚠ ${runStats.totalErrors} error${runStats.totalErrors !== 1 ? 's' : ''}`;
@@ -386,7 +386,7 @@ function buildCategoryEmbed(catName, channelResults, hasErrors, isDryRun) {
     title: `${prefix}Message Cleanup — ${catName}`,
     description,
     color,
-    footer: { text: `${channelResults.length} channels • ${totalPurged} messages ${isDryRun ? 'would be purged' : 'purged'}` },
+    footer: { text: `${channelResults.length} channels • ${totalPurged} messages ${isDryRun ? 'would be purged' : 'purged'} · PurgeBot v${version} by ProphetSe7en` },
     timestamp: new Date().toISOString(),
   };
 }
@@ -499,7 +499,7 @@ async function sendDiscoveryNotification(discoveries) {
     title: 'Channel Auto-Discovery',
     description,
     color: infoColor,
-    footer: { text: `${discoveries.length} change${discoveries.length !== 1 ? 's' : ''} detected` },
+    footer: { text: `${discoveries.length} change${discoveries.length !== 1 ? 's' : ''} detected · PurgeBot v${version} by ProphetSe7en` },
     timestamp: new Date().toISOString(),
   };
 

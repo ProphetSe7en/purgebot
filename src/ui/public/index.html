@@ -472,7 +472,10 @@
 <div x-show="tab === 'schedule'" x-cloak class="p-6">
   <div class="bg-gh-card border border-gh-border rounded-lg p-5 mb-4">
     <div class="flex items-center justify-between mb-4">
-      <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider">Schedule</h3>
+      <div>
+        <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider">Schedule</h3>
+        <p class="text-xs text-gh-dim mt-1">Automatically purge messages older than each channel's retention period on a cron schedule.</p>
+      </div>
       <div class="flex items-center gap-2">
         <span class="text-xs text-gh-muted">Enabled:</span>
         <button @click="editConfig.scheduleEnabled = !editConfig.scheduleEnabled; configDirty = true"
@@ -486,6 +489,11 @@
     <div x-show="!editConfig.scheduleEnabled" class="mb-4">
       <div class="text-xs text-gh-yellow bg-yellow-900/20 border border-yellow-800/50 rounded px-3 py-2">
         Schedule is paused — cleanup only runs manually from the Cleanup tab.
+      </div>
+    </div>
+    <div x-show="editConfig.scheduleEnabled && editConfig.dryRun" class="mb-4">
+      <div class="text-xs text-gh-yellow bg-yellow-900/20 border border-yellow-800/50 rounded px-3 py-2">
+        Dry Run is enabled — scheduled runs will only simulate, no messages will be deleted.
       </div>
     </div>
     <div class="flex items-center gap-4 flex-wrap">
