@@ -6,6 +6,20 @@ Built for servers with many channels (media automation, homelab, development) wh
 
 > **Warning:** PurgeBot permanently deletes Discord messages. Deleted messages **cannot be recovered** — Discord does not have a recycle bin or undo function. Always start with `dryRun: true` (the default) and verify the dry-run output before enabling live deletion. Only channels explicitly listed in your config are processed (allow-list safety), but misconfiguration can still lead to unintended data loss. **Use at your own risk.** The authors are not responsible for any lost messages.
 
+## Screenshots
+
+| Overview | Cleanup |
+|----------|---------|
+| ![Overview](screenshots/overview.png) | ![Cleanup](screenshots/cleanup.png) |
+
+| Sync | Statistics |
+|------|-----------|
+| ![Sync](screenshots/sync.png) | ![Statistics](screenshots/statistics.png) |
+
+| Schedule |
+|----------|
+| ![Schedule](screenshots/schedule.png) |
+
 ## Features
 
 - **Hierarchical retention** — channel override > category default > global default
