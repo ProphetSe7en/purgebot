@@ -10,15 +10,15 @@ Built for servers with many channels (media automation, homelab, development) wh
 
 | Overview | Cleanup |
 |----------|---------|
-| ![Overview](screenshots/overview.png) | ![Cleanup](screenshots/cleanup.png) |
+| ![Overview](docs/images/overview.png) | ![Cleanup](docs/images/cleanup.png) |
 
 | Sync | Statistics |
 |------|-----------|
-| ![Sync](screenshots/sync.png) | ![Statistics](screenshots/statistics.png) |
+| ![Sync](docs/images/sync.png) | ![Statistics](docs/images/statistics.png) |
 
 | Schedule |
 |----------|
-| ![Schedule](screenshots/schedule.png) |
+| ![Schedule](docs/images/schedule.png) |
 
 ## Features
 
@@ -277,24 +277,11 @@ The container includes a built-in healthcheck that verifies the bot has run succ
 
 ### Unraid
 
-PurgeBot includes an Unraid Docker template for easy installation.
+**Install via template:** Download [`purgebot.xml`](https://raw.githubusercontent.com/prophetse7en/unraid-templates/main/purgebot.xml) and place it in `/boot/config/plugins/dockerMan/templates-user/` on your Unraid server. Then go to **Docker** → **Add Container** and select **purgebot** from the Template dropdown.
 
-**Add the template repository (one-time):**
+**Or install manually:** Go to **Docker** → **Add Container**, set Repository to `ghcr.io/prophetse7en/purgebot:latest`, and add the required paths, ports, and variables (see above).
 
-1. In the Unraid web UI, go to **Docker** tab
-2. Scroll to the bottom and click **Template Repositories**
-3. Add this URL: `https://github.com/prophetse7en/purgebot`
-4. Click **Save**
-
-**Install the container:**
-
-1. Click **Add Container**
-2. From the **Template** dropdown, select **purgebot**
-3. Fill in your `DISCORD_TOKEN` and `GUILD_ID` (see [Discord Bot Setup](#1-create-a-discord-bot) above)
-4. Adjust the timezone if needed (default: `America/New_York`)
-5. Click **Apply**
-
-Unraid will pull the image from GHCR and start the container. The Web UI is available at `http://your-unraid-ip:3050`. Config, logs, and stats are stored in `/mnt/user/appdata/purgebot` by default.
+The Web UI is available at `http://your-unraid-ip:3050`. Config, logs, and stats are stored in `/mnt/user/appdata/purgebot` by default.
 
 **Updating:** Click the PurgeBot icon in the Docker tab and select **Force Update** to pull the latest image.
 
