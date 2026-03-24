@@ -10,15 +10,15 @@ Built for servers with many channels (media automation, homelab, development) wh
 
 | Overview | Cleanup |
 |----------|---------|
-| ![Overview](docs/images/overview.png) | ![Cleanup](docs/images/cleanup.png) |
+| ![Overview](screenshots/overview.png) | ![Cleanup](screenshots/cleanup.png) |
 
 | Sync | Statistics |
 |------|-----------|
-| ![Sync](docs/images/sync.png) | ![Statistics](docs/images/statistics.png) |
+| ![Sync](screenshots/sync.png) | ![Statistics](screenshots/statistics.png) |
 
 | Schedule |
 |----------|
-| ![Schedule](docs/images/schedule.png) |
+| ![Schedule](screenshots/schedule.png) |
 
 ## Features
 

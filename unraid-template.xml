@@ -15,7 +15,7 @@
   <Overview>Automated Discord message cleanup with retention policies, Web UI, and auto-discovery. Define per-category and per-channel retention rules, and PurgeBot handles the rest on a schedule or on-demand. Built-in Web UI for managing categories, editing retention, triggering runs, and viewing real-time logs.</Overview>
   <Category>Tools: Productivity:</Category>
   <WebUI>http://[IP]:[PORT:3050]</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/prophetse7en/purgebot/main/unraid-template.xml</TemplateURL>
+  <TemplateURL>https://raw.githubusercontent.com/prophetse7en/unraid-templates/main/purgebot.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/prophetse7en/purgebot/main/icon.png</Icon>
   <ExtraParams/>
   <PostArgs/>

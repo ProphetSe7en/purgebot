@@ -1,9 +1,1 @@
-node_modules/
-config.yaml
-stats.json
-logs/
-*.log
-.env
-.env.*
-icon[0-9]*.png
-App icon*
+screenshots/
