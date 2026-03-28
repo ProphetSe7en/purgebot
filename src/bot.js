@@ -1221,7 +1221,7 @@ function cancelCleanup() {
 }
 
 module.exports = {
-  config, client, logEmitter, loadConfig, runCleanup, syncConfig, setupCron,
+  version, config, client, logEmitter, loadConfig, runCleanup, syncConfig, setupCron,
   CONFIG_HEADER, CONFIG_PATH, STATS_PATH, fixOwnership, configForDisk, log, LOG_DIR,
   isCleanupRunning, isCleanupCancelling, getCleanupStartTime, cancelCleanup, writeHeartbeat, getConfiguredChannels,
   getRetention, getRetentionSource, formatRetention, fetchGuildWebhooks,

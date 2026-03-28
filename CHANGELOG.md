@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.1.1
+
+### Bug fixes
+- **Webhook test error** — Fixed "Cannot find module package.json" error when testing webhooks. Now uses already-loaded version from bot module instead of relative require path.
+
 ## v1.1.0
 
 ### Features
