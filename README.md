@@ -277,7 +277,7 @@ The container includes a built-in healthcheck that verifies the bot has run succ
 
 ### Unraid
 
-**Install via template:** Download [`purgebot.xml`](https://raw.githubusercontent.com/prophetse7en/unraid-templates/main/purgebot.xml) and place it in `/boot/config/plugins/dockerMan/templates-user/` on your Unraid server. Then go to **Docker** → **Add Container** and select **purgebot** from the Template dropdown.
+**Install via Community Apps:** Search for **purgebot** in the Apps tab — click Install and configure your settings.
 
 **Or install manually:** Go to **Docker** → **Add Container**, set Repository to `ghcr.io/prophetse7en/purgebot:latest`, and add the required paths, ports, and variables (see above).
 
