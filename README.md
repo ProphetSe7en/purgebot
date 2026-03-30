@@ -358,6 +358,13 @@ This software is provided "as is", without warranty of any kind. PurgeBot perman
 
 See the [MIT License](LICENSE) for full terms.
 
+## Support
+
+For questions, help, or bug reports:
+
+- **Discord:** [`#prophetse7en-apps`](https://discordapp.com/channels/492590071455940612/1486391669384417300) on the [TRaSH Guides Discord](https://trash-guides.info/discord) (under Community Apps)
+- **GitHub:** [prophetse7en/purgebot/issues](https://github.com/prophetse7en/purgebot/issues)
+
 ## License
 
 MIT

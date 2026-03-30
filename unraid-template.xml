@@ -10,7 +10,7 @@
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/prophetse7en/purgebot/issues</Support>
+  <Support>https://discordapp.com/channels/492590071455940612/1486391669384417300</Support>
   <Project>https://github.com/prophetse7en/purgebot</Project>
   <Overview>Automated Discord message cleanup with retention policies, Web UI, and auto-discovery. Define per-category and per-channel retention rules, and PurgeBot handles the rest on a schedule or on-demand. Built-in Web UI for managing categories, editing retention, triggering runs, and viewing real-time logs.</Overview>
   <Category>Tools: Productivity:</Category>
