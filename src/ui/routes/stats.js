@@ -50,6 +50,7 @@ router.get('/status', (req, res) => {
     totalChannels: channelCount,
     globalDefault: cfg.globalDefault,
     uptime: process.uptime(),
+    version: bot.version,
   });
 });
 
