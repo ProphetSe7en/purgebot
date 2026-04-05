@@ -44,7 +44,8 @@ function loadConfig(exitOnError = true) {
     // (N12) Validate discord config values
     parsed.discord.maxMessagesPerChannel = Math.max(1, Math.floor(parsed.discord.maxMessagesPerChannel ?? 500));
     parsed.discord.maxOldDeletesPerChannel = Math.max(0, Math.floor(parsed.discord.maxOldDeletesPerChannel ?? 50));
-    parsed.discord.delayBetweenChannels = Math.max(0, Math.floor(parsed.discord.delayBetweenChannels ?? 2000));
+    parsed.discord.delayBetweenChannels = Math.max(0, Math.floor(parsed.discord.delayBetweenChannels ?? 500));
+    parsed.discord.delayBetweenDeletes = Math.max(200, Math.floor(parsed.discord.delayBetweenDeletes ?? 400));
     parsed.discord.skipPinned = parsed.discord.skipPinned ?? true;
     parsed.logging = parsed.logging || {};
     parsed.logging.maxDays = Math.max(1, Math.floor(parsed.logging.maxDays ?? 30));
@@ -52,6 +53,14 @@ function loadConfig(exitOnError = true) {
     parsed.webhooks.cleanupColor = parsed.webhooks.cleanupColor || '#238636';
     parsed.webhooks.infoColor = parsed.webhooks.infoColor || '#f39c12';
     parsed.webhooks.discovery = !!parsed.webhooks.discovery;
+    parsed.gotify = parsed.gotify || {};
+    parsed.gotify.enabled = !!parsed.gotify.enabled;
+    parsed.gotify.url = (parsed.gotify.url || '').replace(/\/+$/, '');
+    parsed.gotify.token = parsed.gotify.token || '';
+    parsed.gotify.priorityWarning = parsed.gotify.priorityWarning !== false;
+    parsed.gotify.warningValue = Math.max(0, Math.floor(parsed.gotify.warningValue ?? 5));
+    parsed.gotify.priorityInfo = parsed.gotify.priorityInfo !== false;
+    parsed.gotify.infoValue = Math.max(0, Math.floor(parsed.gotify.infoValue ?? 3));
     parsed.scheduleEnabled = parsed.scheduleEnabled !== false;
     parsed.display = parsed.display || {};
     parsed.display.timeFormat = parsed.display.timeFormat || '24h';
@@ -251,7 +260,7 @@ const CONFIG_HEADER = `# PurgeBot — Configuration
 
 // Strip internal keys before writing config to disk or sending via API
 function configForDisk() {
-  const { _discoveryComplete, timezone, ...rest } = config;
+  const { timezone, ...rest } = config;
   return rest;
 }
 
@@ -307,12 +316,9 @@ async function sendWebhook(embeds) {
 }
 
 async function sendSummaryNotification(runStats) {
-  const webhookUrl = config.webhooks.info;
-  if (!webhookUrl) return;
   if (runStats.dryRun) return;
   if (runStats.totalPurged === 0 && runStats.totalErrors === 0) return;
 
-  const infoColor = parseInt((config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12;
   const catCount = Object.keys(runStats.categories || {}).length;
   const trigger = (runStats.trigger || 'schedule').charAt(0).toUpperCase() + (runStats.trigger || 'schedule').slice(1);
   const titleSuffix = runStats.cancelled ? 'Stopped' : 'Complete';
@@ -324,27 +330,47 @@ async function sendSummaryNotification(runStats) {
     description += `\n⚠ Cancelled (partial run)`;
   }
 
-  const embed = {
-    title: `Cleanup ${titleSuffix} · ${trigger} Run`,
-    description,
-    color: runStats.totalErrors > 0 ? 0xe74c3c : infoColor,
-    footer: { text: `PurgeBot v${version} by ProphetSe7en` },
-    timestamp: new Date().toISOString(),
-  };
+  // Discord notification
+  const webhookUrl = config.webhooks.info;
+  if (webhookUrl) {
+    const infoColor = parseInt((config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12;
+    const embed = {
+      title: `Cleanup ${titleSuffix} · ${trigger} Run`,
+      description,
+      color: runStats.totalErrors > 0 ? 0xe74c3c : infoColor,
+      footer: { text: `PurgeBot v${version} by ProphetSe7en` },
+      timestamp: new Date().toISOString(),
+    };
 
-  try {
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ embeds: [embed] }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      log('WARN', `Summary webhook response: ${res.status} — ${body}`);
+    try {
+      const res = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ embeds: [embed] }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        log('WARN', `Summary webhook response: ${res.status} — ${body}`);
+      }
+    } catch (err) {
+      log('ERROR', `Summary webhook failed: ${err.message}`);
     }
-  } catch (err) {
-    log('ERROR', `Summary webhook failed: ${err.message}`);
   }
+
+  // Gotify notification — combined summary with per-category breakdown
+  let gotifyMsg = description;
+  const cats = runStats.categories || {};
+  const activeCats = Object.entries(cats).filter(([, s]) => s.purged > 0 || s.errors > 0);
+  if (activeCats.length > 0) {
+    gotifyMsg += '\n';
+    for (const [catName, stats] of activeCats) {
+      let line = `- **${catName}:** ${stats.purged} purged`;
+      if (stats.errors > 0) line += `, ${stats.errors} error${stats.errors !== 1 ? 's' : ''}`;
+      gotifyMsg += '\n' + line;
+    }
+  }
+  const level = runStats.totalErrors > 0 ? 'warning' : 'info';
+  await sendGotify(`PurgeBot: Cleanup ${titleSuffix}`, gotifyMsg, level);
 }
 
 function formatDuration(ms) {
@@ -393,9 +419,8 @@ function buildCategoryEmbed(catName, channelResults, hasErrors, isDryRun) {
 
 // --- Auto-Discovery ---
 
-// Discovers new categories/channels and adds them to config before cleanup.
+// Discovers new categories/channels and removes deleted ones from config.
 // New categories are always disabled. New channels inherit category default.
-// Only adds — never removes. Use --sync for full reconciliation.
 async function autoDiscoverChannels(guild) {
   const discordCategories = guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory);
   const textChannels = guild.channels.cache.filter(c => c.type === ChannelType.GuildText && c.parentId);
@@ -413,6 +438,7 @@ async function autoDiscoverChannels(guild) {
   let changes = 0;
   const discoveries = [];
 
+  // --- Add new categories and channels ---
   for (const [catName, channels] of discoveredMap) {
     const sortedChannels = [...channels].sort();
 
@@ -445,6 +471,42 @@ async function autoDiscoverChannels(guild) {
     }
   }
 
+  // --- Remove deleted channels and categories ---
+  for (const catName of Object.keys(config.categories)) {
+    const discordChannels = discoveredMap.get(catName);
+
+    if (!discordChannels) {
+      // Entire category gone from Discord
+      const cat = config.categories[catName];
+      const channelCount = Array.isArray(cat._channels) ? cat._channels.length : 0;
+      log('INFO', `Category "${catName}" removed from Discord (${channelCount} channels)`);
+      discoveries.push({ type: 'category-removed', name: catName, channelCount });
+      delete config.categories[catName];
+      changes++;
+      continue;
+    }
+
+    // Check for removed channels within existing category
+    const cat = config.categories[catName];
+    if (!Array.isArray(cat._channels)) continue;
+    const discordSet = new Set(discordChannels);
+    const before = cat._channels.length;
+    const removed = [];
+    cat._channels = cat._channels.filter(entry => {
+      const name = typeof entry === 'string' ? entry : Object.keys(entry)[0];
+      if (discordSet.has(name)) return true;
+      removed.push(name);
+      return false;
+    });
+    if (removed.length > 0) {
+      changes += removed.length;
+      for (const name of removed) {
+        log('INFO', `Channel #${name} removed from "${catName}" (deleted from Discord)`);
+        discoveries.push({ type: 'channel-removed', name, category: catName });
+      }
+    }
+  }
+
   if (changes > 0 || isFirstDiscovery) {
     config._discoveryComplete = true;
     const yamlStr = yaml.dump(configForDisk(), { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false });
@@ -452,7 +514,7 @@ async function autoDiscoverChannels(guild) {
     fs.writeFileSync(tmpPath, CONFIG_HEADER + yamlStr, 'utf8');
     fs.renameSync(tmpPath, CONFIG_PATH);
     fixOwnership(CONFIG_PATH);
-    if (changes > 0) log('INFO', `Auto-discovery: ${changes} new channels/categories added to config`);
+    if (changes > 0) log('INFO', `Auto-discovery: ${changes} changes applied to config`);
 
     if (!isFirstDiscovery && discoveries.length > 0) {
       await sendDiscoveryNotification(discoveries);
@@ -461,12 +523,11 @@ async function autoDiscoverChannels(guild) {
 }
 
 async function sendDiscoveryNotification(discoveries) {
-  const webhookUrl = config.webhooks.info;
-  if (!webhookUrl) return;
-
   const lines = [];
   const newCategories = discoveries.filter(d => d.type === 'category');
   const newChannels = discoveries.filter(d => d.type === 'channel');
+  const removedCategories = discoveries.filter(d => d.type === 'category-removed');
+  const removedChannels = discoveries.filter(d => d.type === 'channel-removed');
 
   for (const cat of newCategories) {
     lines.push(`**New category: ${cat.name}** — \`DISABLED\``);
@@ -489,32 +550,97 @@ async function sendDiscoveryNotification(discoveries) {
     }
   }
 
+  // Removed categories
+  for (const cat of removedCategories) {
+    lines.push(`**Removed category: ${cat.name}** — ${cat.channelCount} channel${cat.channelCount !== 1 ? 's' : ''} removed from config`);
+  }
+
+  // Group removed channels by category
+  const removedByCategory = new Map();
+  for (const ch of removedChannels) {
+    if (!removedByCategory.has(ch.category)) removedByCategory.set(ch.category, []);
+    removedByCategory.get(ch.category).push(ch);
+  }
+
+  for (const [catName, channels] of removedByCategory) {
+    const names = channels.map(ch => `#${ch.name}`).join(', ');
+    lines.push(`**${catName}** — ${names} removed (deleted from Discord)`);
+  }
+
   let description = lines.join('\n');
   if (description.length > 4000) {
     description = description.substring(0, 3990) + '\n... (truncated)';
   }
 
-  const infoColor = parseInt((config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12;
-  const embed = {
-    title: 'Channel Auto-Discovery',
-    description,
-    color: infoColor,
-    footer: { text: `${discoveries.length} change${discoveries.length !== 1 ? 's' : ''} detected · PurgeBot v${version} by ProphetSe7en` },
-    timestamp: new Date().toISOString(),
-  };
+  // Discord notification
+  const webhookUrl = config.webhooks.info;
+  if (webhookUrl) {
+    const infoColor = parseInt((config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12;
+    const embed = {
+      title: 'Channel Auto-Discovery',
+      description,
+      color: infoColor,
+      footer: { text: `${discoveries.length} change${discoveries.length !== 1 ? 's' : ''} detected · PurgeBot v${version} by ProphetSe7en` },
+      timestamp: new Date().toISOString(),
+    };
 
+    try {
+      const res = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ embeds: [embed] }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        log('WARN', `Info webhook response: ${res.status} — ${body}`);
+      }
+    } catch (err) {
+      log('ERROR', `Info webhook failed: ${err.message}`);
+    }
+  }
+
+  // Gotify notification
+  await sendGotify('PurgeBot: Channel Auto-Discovery', description, 'info');
+}
+
+// --- Gotify Notification ---
+
+async function sendGotify(title, message, level = 'info') {
+  if (!config.gotify?.enabled || !config.gotify.url || !config.gotify.token) return;
+
+  let priority;
+  if (level === 'warning') {
+    if (!config.gotify.priorityWarning) return;
+    priority = config.gotify.warningValue ?? 5;
+  } else {
+    if (!config.gotify.priorityInfo) return;
+    priority = config.gotify.infoValue ?? 3;
+  }
+
+  // Ensure markdown renders properly in Gotify
+  let msg = message;
+  msg = msg.replace(/\n\*\*/g, '\n\n**');
+  msg = msg.replace(/\n- /g, '\n\n- ');
+  while (msg.includes('\n\n\n')) msg = msg.replace(/\n\n\n/g, '\n\n');
+
+  const url = `${config.gotify.url}/message?token=${encodeURIComponent(config.gotify.token)}`;
   try {
-    const res = await fetch(webhookUrl, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ embeds: [embed] }),
+      body: JSON.stringify({
+        title,
+        message: msg,
+        priority,
+        extras: { 'client::display': { contentType: 'text/markdown' } },
+      }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      log('WARN', `Info webhook response: ${res.status} — ${body}`);
+      log('WARN', `Gotify notification failed: ${res.status} — ${body}`);
     }
   } catch (err) {
-    log('ERROR', `Info webhook failed: ${err.message}`);
+    log('ERROR', `Gotify notification failed: ${err.message}`);
   }
 }
 
@@ -824,7 +950,7 @@ async function runCleanup(options = {}) {
               } catch (delErr) {
                 log('WARN', `${catName}/#${chanName}: failed to delete message ${msg.id}: ${delErr.message}`);
               }
-              await sleep(1200); // Rate limit: ~1 delete per second
+              await sleep(config.discord.delayBetweenDeletes);
             }
             if (oldDeletable.length > maxOld) {
               log('WARN', `${catName}/#${chanName}: ${oldDeletable.length - maxOld} old messages remain (capped at ${maxOld}/run)`);
@@ -853,7 +979,11 @@ async function runCleanup(options = {}) {
           dryRun: effectiveDryRun,
         });
 
-        await sleep(config.discord.delayBetweenChannels);
+        // Skip delay if channel had nothing to delete (no rate limit consumed)
+        const lastResult = channelResults[channelResults.length - 1];
+        if (lastResult.purged > 0 || lastResult.error) {
+          await sleep(config.discord.delayBetweenChannels);
+        }
       }
 
       // Collect per-category stats

@@ -19,7 +19,8 @@ router.put('/', (req, res) => {
     }
 
     // Strip internal/read-only keys that shouldn't be set via API
-    delete newConfig._discoveryComplete;
+    // Preserve _discoveryComplete from current config (persisted, not exposed to UI)
+    newConfig._discoveryComplete = bot.config._discoveryComplete;
     delete newConfig.timezone;
 
     // Validate required fields
@@ -87,6 +88,7 @@ router.patch('/global', (req, res) => {
       if (d.maxMessagesPerChannel !== undefined) { const v = Number(d.maxMessagesPerChannel); if (!isNaN(v)) cfg.discord.maxMessagesPerChannel = Math.max(1, Math.floor(v)); }
       if (d.maxOldDeletesPerChannel !== undefined) { const v = Number(d.maxOldDeletesPerChannel); if (!isNaN(v)) cfg.discord.maxOldDeletesPerChannel = Math.max(0, Math.floor(v)); }
       if (d.delayBetweenChannels !== undefined) { const v = Number(d.delayBetweenChannels); if (!isNaN(v)) cfg.discord.delayBetweenChannels = Math.max(0, Math.floor(v)); }
+      if (d.delayBetweenDeletes !== undefined) { const v = Number(d.delayBetweenDeletes); if (!isNaN(v)) cfg.discord.delayBetweenDeletes = Math.max(200, Math.floor(v)); }
       if (d.skipPinned !== undefined) cfg.discord.skipPinned = !!d.skipPinned;
     }
     if (updates.logging !== undefined && typeof updates.logging === 'object') {
@@ -99,6 +101,16 @@ router.patch('/global', (req, res) => {
       if (updates.webhooks.cleanupColor !== undefined) cfg.webhooks.cleanupColor = String(updates.webhooks.cleanupColor || '#238636');
       if (updates.webhooks.infoColor !== undefined) cfg.webhooks.infoColor = String(updates.webhooks.infoColor || '#f39c12');
       if (updates.webhooks.discovery !== undefined) cfg.webhooks.discovery = !!updates.webhooks.discovery;
+    }
+    if (updates.gotify !== undefined && typeof updates.gotify === 'object') {
+      if (!cfg.gotify) cfg.gotify = {};
+      if (updates.gotify.enabled !== undefined) cfg.gotify.enabled = !!updates.gotify.enabled;
+      if (updates.gotify.url !== undefined) cfg.gotify.url = String(updates.gotify.url || '').replace(/\/+$/, '');
+      if (updates.gotify.token !== undefined) cfg.gotify.token = String(updates.gotify.token || '');
+      if (updates.gotify.priorityWarning !== undefined) cfg.gotify.priorityWarning = !!updates.gotify.priorityWarning;
+      if (updates.gotify.warningValue !== undefined) cfg.gotify.warningValue = Math.max(0, Math.floor(Number(updates.gotify.warningValue) || 0));
+      if (updates.gotify.priorityInfo !== undefined) cfg.gotify.priorityInfo = !!updates.gotify.priorityInfo;
+      if (updates.gotify.infoValue !== undefined) cfg.gotify.infoValue = Math.max(0, Math.floor(Number(updates.gotify.infoValue) || 0));
     }
     if (updates.scheduleEnabled !== undefined) cfg.scheduleEnabled = !!updates.scheduleEnabled;
     if (updates.display !== undefined && typeof updates.display === 'object') {
@@ -166,6 +178,41 @@ router.post('/test-webhook', async (req, res) => {
       const body = await r.text().catch(() => '');
       bot.log('WARN', `Test ${type} webhook failed: ${r.status} — ${body}`);
       res.status(400).json({ error: `Discord returned ${r.status}: ${body || 'Unknown error'}` });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/config/test-gotify — send a test message to Gotify
+router.post('/test-gotify', async (req, res) => {
+  try {
+    const { url, token } = req.body;
+    if (!url || !token) {
+      return res.status(400).json({ error: 'Missing url or token' });
+    }
+    const gotifyUrl = url.replace(/\/+$/, '');
+
+    const payload = {
+      title: 'PurgeBot — Test',
+      message: 'This is a test message from PurgeBot. Cleanup summaries and auto-discovery notifications will appear here.',
+      priority: 5,
+      extras: { 'client::display': { contentType: 'text/markdown' } },
+    };
+
+    const r = await fetch(`${gotifyUrl}/message?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (r.ok) {
+      bot.log('INFO', 'Test Gotify message sent successfully');
+      res.json({ ok: true });
+    } else {
+      const body = await r.text().catch(() => '');
+      bot.log('WARN', `Test Gotify message failed: ${r.status} — ${body}`);
+      res.status(400).json({ error: `Gotify returned ${r.status}: ${body || 'Unknown error'}` });
     }
   } catch (err) {
     res.status(500).json({ error: err.message });

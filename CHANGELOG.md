@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.2.0
+
+### Features
+- **Gotify push notifications** — Configurable Gotify support for cleanup summaries and auto-discovery notifications. Per-level priority toggles (Warning/Info) with customizable priority values. Gotify receives a combined summary with per-category breakdown instead of individual per-category messages.
+- **Gotify settings UI** — Collapsible Gotify section in Settings with enable toggle, URL/token fields, test button, and priority configuration.
+- **Configurable delete delay** — New `delayBetweenDeletes` setting (default 400ms, min 200ms) controls pause between individual old message deletes (>14 days).
+- **Auto-cleanup of deleted channels** — Channels and categories deleted from Discord are automatically removed from config during discovery, with notifications showing what was removed and which category it belonged to.
+
+### Improvements
+- **Faster cleanup runs** — `delayBetweenChannels` default reduced from 2000ms to 500ms. Delay is now skipped entirely when a channel had nothing to delete. Combined with the new delete delay default (1200ms → 400ms), cleanup runs complete significantly faster.
+
 ## v1.1.1
 
 ### Bug fixes

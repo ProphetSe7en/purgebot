@@ -65,6 +65,18 @@ webhooks:
   # Requires the bot to have Manage Webhooks permission.
   discovery: false
 
+gotify:
+  # Gotify push notifications (alternative/complement to Discord webhooks)
+  enabled: false
+  url: ""
+  token: ""
+
+  # Per-level toggles and priority values (0-10, 4+ triggers push notification)
+  priorityWarning: true
+  warningValue: 5
+  priorityInfo: true
+  infoValue: 3
+
 discord:
   # Max messages to scan per channel per run (older messages beyond this are not checked)
   maxMessagesPerChannel: 500
@@ -74,8 +86,15 @@ discord:
   # Messages older than 14 days are deleted one by one, capped at this limit.
   maxOldDeletesPerChannel: 50
 
-  # Delay in ms between processing each channel (rate limit protection)
-  delayBetweenChannels: 2000
+  # Delay in ms between processing each channel (rate limit protection).
+  # Skipped automatically when a channel had nothing to delete.
+  # Discord rate limits are per-request — 500ms is safe. Minimum: 0.
+  delayBetweenChannels: 500
+
+  # Delay in ms between individual deletes for messages older than 14 days.
+  # Discord allows 5 DELETE/sec per channel — 400ms = 2.5/sec (half the limit).
+  # Do not set below 200ms to avoid rate limiting.
+  delayBetweenDeletes: 400
 
   # Skip pinned messages — pinned messages are never deleted when true
   skipPinned: true
