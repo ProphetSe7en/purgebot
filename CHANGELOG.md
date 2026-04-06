@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.2.1
+
+### Bug fixes
+- **Settings autofill** — Browser password managers no longer autofill the Gotify URL/token and Discord webhook fields in Settings (added `autocomplete="one-time-code"`).
+
+### Improvements
+- **Version label** — Docker image now carries the `org.opencontainers.image.version` OCI label, injected from the git tag at build time.
+
 ## v1.2.0
 
 ### Features

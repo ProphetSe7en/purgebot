@@ -1,5 +1,7 @@
 FROM node:22-alpine
 
+ARG VERSION=dev
+
 RUN apk add --no-cache su-exec
 
 WORKDIR /app
@@ -34,6 +36,7 @@ HEALTHCHECK --interval=60s --timeout=5s --retries=3 \
 ENTRYPOINT ["/entrypoint.sh"]
 LABEL org.opencontainers.image.title="PurgeBot" \
       org.opencontainers.image.description="Automated Discord message cleanup with retention policies and Web UI" \
-      org.opencontainers.image.source="https://github.com/prophetse7en/purgebot"
+      org.opencontainers.image.source="https://github.com/prophetse7en/purgebot" \
+      org.opencontainers.image.version="${VERSION}"
 
 CMD ["node", "src/bot.js"]

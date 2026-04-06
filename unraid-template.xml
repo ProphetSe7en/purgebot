@@ -5,7 +5,11 @@
   <Registry>https://github.com/prophetse7en/purgebot/pkgs/container/purgebot</Registry>
   <Branch>
     <Tag>latest</Tag>
-    <TagDescription>Latest stable release</TagDescription>
+    <TagDescription>Stable release (recommended)</TagDescription>
+  </Branch>
+  <Branch>
+    <Tag>dev</Tag>
+    <TagDescription>Development builds — may contain bugs or breaking changes</TagDescription>
   </Branch>
   <Network>bridge</Network>
   <Shell>sh</Shell>
