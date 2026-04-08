@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.2.2
+
+### UI
+
+- **Schedule tab — Enabled Categories alignment.** Switched the list
+  from a flex layout with `min-w-[120px]` on the name column to a
+  `grid-cols-[160px_1fr]` layout so the "channels · default" column
+  stays aligned regardless of how long the category name is. Long
+  names are now truncated with an ellipsis and the full name appears
+  on hover.
+- **Sync tab — clarified Channel Discovery description.** The text
+  now explains that new categories are added disabled (but inherit
+  the global default retention), and new channels in already-enabled
+  categories follow the category's default retention. Also notes
+  that scheduled cleanup auto-discovers before each run, so manual
+  sync is only needed between runs.
+
+### Template
+
+- **Removed the `Timezone` (TZ) config variable.** Unraid auto-injects
+  the host's timezone into containers when the template does not set
+  it — and Node.js uses its bundled ICU for timezone resolution, so
+  cron scheduling continues to work correctly without the variable.
+  This brings purgebot in line with the clonarr template and matches
+  community feedback. Existing installations keep whatever TZ they
+  already had — remove the variable in the container edit screen if
+  you want it to follow the host.
+
 ## v1.2.1
 
 ### Bug fixes
