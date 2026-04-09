@@ -34,6 +34,7 @@ Built for servers with many channels (media automation, homelab, development) wh
 - **Scheduled cleanup** — cron-based scheduling with timezone support
 - **Hot-reload config** — edit config.yaml or use the Web UI — changes take effect on next run
 - **Webhook notifications** — cleanup summaries and auto-discovery alerts to Discord
+- **Purge All** — delete and recreate a channel to instantly clear all history, with webhook recreation and recovery safety net
 - **>14-day delete support** — individually deletes messages older than Discord's bulk-delete limit
 - **Atomic config writes** — write-to-temp then rename prevents corruption
 - **Docker-native** — PUID/PGID/UMASK, healthcheck, Alpine-based (~45 MB)
@@ -49,7 +50,7 @@ Built for servers with many channels (media automation, homelab, development) wh
    - Under **Privileged Gateway Intents**, enable **Message Content Intent**
 4. Go to **OAuth2 > URL Generator**:
    - **Scopes:** select `bot`
-   - **Bot Permissions:** select `Administrator` (simplest — needed for private channels), or at minimum: `View Channels`, `Read Message History`, `Manage Messages`, `Manage Webhooks` (for webhook discovery tab)
+   - **Bot Permissions:** select `Administrator` (simplest — needed for private channels), or at minimum: `View Channels`, `Read Message History`, `Manage Messages`, `Manage Channels` (for Purge All), `Manage Webhooks` (for webhook discovery + Purge All webhook recreation)
 5. Copy the generated URL, open it in your browser, select your server, and authorize
 
 > **Finding your Guild ID:** Enable Developer Mode in Discord (Settings > Advanced > Developer Mode), then right-click your server name and click "Copy Server ID". This is your `GUILD_ID`.
@@ -313,6 +314,10 @@ The Web UI communicates via a REST API. All state-changing requests require the 
 | `POST` | `/api/cleanup/sync` | Trigger channel sync (returns result) |
 | `POST` | `/api/cleanup/dryrun` | Force dry-run (`{category, channel}` optional) |
 | `POST` | `/api/cleanup/cancel` | Cancel a running cleanup |
+| `POST` | `/api/cleanup/purge-all` | Delete and recreate a channel |
+| `GET` | `/api/cleanup/resolve-channels?category=` | List channels with Discord IDs |
+| `GET` | `/api/cleanup/recovery` | List recovery snapshots |
+| `POST` | `/api/cleanup/recover` | Restore a channel from recovery snapshot |
 | `GET` | `/api/logs?date=&level=&search=&limit=` | Read log files |
 | `GET` | `/api/logs/stream` | SSE endpoint for live logs |
 
@@ -329,7 +334,7 @@ src/
     │   └── index.html          # Single-page app (Alpine.js + Tailwind CSS)
     └── routes/
         ├── config.js           # Config CRUD with validation
-        ├── control.js          # Run/sync/dryrun triggers
+        ├── control.js          # Run/sync/dryrun/purge-all/recovery triggers
         ├── logs.js             # Log file reader + SSE streaming
         └── stats.js            # Stats from stats.json + live status
 ```

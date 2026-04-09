@@ -32,6 +32,9 @@
   .log-mono { font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; }
   @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
   .pulse-dot { animation: pulse-dot 2s infinite; }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; }
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-track { background: #0d1117; }
   ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
@@ -186,8 +189,8 @@
             <span x-text="countOverrides(cat) + ' override' + (countOverrides(cat) !== 1 ? 's' : '')"></span>
             <span :class="cat.enabled ? 'text-gh-green' : 'text-gh-dim'" x-text="cat.enabled ? 'Enabled' : 'Disabled'"></span>
             <button x-show="cat.enabled" @click.stop="runCategory(catName)" :disabled="status.cleanupRunning || syncRunning"
-              class="px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-blue hover:border-gh-blue transition disabled:opacity-50 disabled:cursor-not-allowed"
-              x-text="status.dryRun ? 'Dry Run' : 'Run'"></button>
+              class="px-2 py-0.5 rounded border border-green-900/60 bg-green-900/30 text-gh-green hover:bg-green-900/50 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              x-text="status.dryRun ? 'Dry Run' : 'Cleanup'"></button>
             <svg class="w-4 h-4 transition-transform" :class="openCategories.includes(catName) && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
           </div>
         </div>
@@ -220,7 +223,7 @@
             </div>
           </div>
           <!-- Channel list -->
-          <template x-for="(ch, idx) in (cat._channels || [])" :key="channelName(ch)">
+          <template x-for="(ch, idx) in (cat._channels || [])" :key="catName + '-' + idx">
             <div class="flex items-center justify-between py-1.5 text-sm">
               <span class="text-gh-muted flex items-center gap-1">
                 <span class="text-gh-dim">#</span>
@@ -235,8 +238,10 @@
                   class="px-1.5 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs w-12 text-center focus:border-gh-blue outline-none"
                   min="-1" placeholder="—">
                 <button x-show="cat.enabled && channelEffectiveRetention(ch, cat) !== -1" @click.stop="runChannel(catName, channelName(ch))" :disabled="status.cleanupRunning || syncRunning"
-                  class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-blue hover:border-gh-blue transition disabled:opacity-50 disabled:cursor-not-allowed"
-                  x-text="status.dryRun ? 'Dry Run' : 'Run'"></button>
+                  class="text-[10px] px-2 py-0.5 rounded border border-green-900/60 bg-green-900/30 text-gh-green hover:bg-green-900/50 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  x-text="status.dryRun ? 'Dry Run' : 'Cleanup'"></button>
+                <button @click.stop="openPurgeAll(catName, channelName(ch))" :disabled="status.cleanupRunning || syncRunning"
+                  class="text-[10px] px-2 py-0.5 rounded bg-red-800 text-red-100 hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed">Purge All</button>
               </div>
             </div>
           </template>
@@ -376,7 +381,7 @@
           <input type="number" x-model.number="editConfig.discord.maxMessagesPerChannel" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="1">
         </div>
         <div class="flex items-center gap-4 py-3">
-          <div class="w-64 shrink-0"><div class="text-sm">Max Old Deletes Per Channel</div><div class="text-xs text-gh-dim">Messages >14 days deleted individually. 0 = skip</div></div>
+          <div class="w-64 shrink-0"><div class="text-sm">Max Old Deletes Per Channel</div><div class="text-xs text-gh-dim">Messages >14 days deleted individually (≈0.4s each). 0 = skip. High values are safe but slow — 200 ≈ 80s per channel.</div></div>
           <input type="number" x-model.number="editConfig.discord.maxOldDeletesPerChannel" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="0">
         </div>
         <div class="flex items-center gap-4 py-3">
@@ -436,7 +441,7 @@
           </div>
         </div>
         <div class="flex items-center gap-4 py-3">
-          <div class="w-64 shrink-0"><div class="text-sm">Webhook Discovery</div><div class="text-xs text-gh-dim">Show Webhooks tab — lists all server webhooks</div></div>
+          <div class="w-64 shrink-0"><div class="text-sm">Discover Webhooks</div><div class="text-xs text-gh-dim">Show Webhooks tab — lists all server webhooks</div></div>
           <button @click="editConfig.webhooks.discovery = !editConfig.webhooks.discovery; configDirty = true"
             class="w-10 h-5 rounded-full relative transition-colors shrink-0"
             :class="editConfig.webhooks?.discovery ? 'bg-blue-600' : 'bg-gh-border2'">
@@ -540,6 +545,29 @@
   </div>
 
 </div>
+
+  <!-- Recovery Section — only visible when recovery files exist -->
+  <div x-show="recoveryFiles.length > 0" class="bg-gh-card border border-red-900/60 rounded-lg overflow-hidden">
+    <div class="px-5 py-3">
+      <h3 class="text-xs font-semibold text-gh-red uppercase tracking-wider">Recovery</h3>
+      <p class="text-xs text-gh-dim mt-1">Channels that failed to recreate during Purge All. Select one to restore it with its original settings and webhooks.</p>
+    </div>
+    <div class="px-5 pb-4 border-t border-red-900/40">
+      <template x-for="rf in recoveryFiles" :key="rf.file">
+        <div class="flex items-center justify-between py-2 border-b border-gh-border last:border-b-0">
+          <div>
+            <span class="text-sm text-gh-text"><span class="text-gh-dim">#</span><span x-text="rf.name"></span></span>
+            <span class="text-xs text-gh-dim ml-2" x-text="'in ' + rf.category"></span>
+            <span x-show="rf.webhooks > 0" class="text-xs text-gh-dim ml-2" x-text="rf.webhooks + ' webhook' + (rf.webhooks !== 1 ? 's' : '')"></span>
+            <span class="text-[10px] text-gh-dim ml-2" x-text="new Date(rf.timestamp).toLocaleString()"></span>
+          </div>
+          <button @click="executeRecover(rf.file, rf.name)" :disabled="recoverRunning"
+            class="text-[10px] px-2 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            x-text="recoverRunning === rf.file ? 'Recovering...' : 'Recover'"></button>
+        </div>
+      </template>
+    </div>
+  </div>
 
 <!-- ===== SCHEDULE TAB ===== -->
 <div x-show="tab === 'schedule'" x-cloak class="p-6">
@@ -969,6 +997,108 @@
   </template>
 </div>
 
+<!-- Purge All confirmation modal -->
+<template x-if="purgeAllModal.show">
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="!purgeAllModal.running && (purgeAllModal.show = false)" @keydown.escape.window="!purgeAllModal.running && (purgeAllModal.show = false)">
+    <div class="bg-gh-card border border-gh-border rounded-lg shadow-xl w-full max-w-md mx-4">
+      <!-- Confirm step -->
+      <template x-if="!purgeAllModal.running && !purgeAllModal.done">
+        <div>
+          <div class="px-5 pt-5 pb-3">
+            <h3 class="text-base font-semibold text-gh-red mb-3">Purge All Messages</h3>
+            <p class="text-sm text-gh-text mb-2">This will <strong class="text-gh-red">delete and recreate</strong> the channel:</p>
+            <div class="bg-red-950/40 border border-red-900/60 rounded-md px-3 py-2 mb-3">
+              <span class="text-sm text-gh-muted"><span class="text-gh-dim">#</span><strong class="text-gh-text" x-text="purgeAllModal.channel"></strong></span>
+              <span class="text-xs text-gh-dim ml-2" x-text="'in ' + purgeAllModal.category"></span>
+              <span x-show="purgeAllModal.channelId" class="text-[10px] text-gh-dim ml-1 font-mono" x-text="purgeAllModal.channelId"></span>
+            </div>
+            <template x-if="purgeAllModal.duplicates">
+              <div class="mb-3">
+                <p class="text-xs text-gh-yellow mb-2">Multiple channels share this name — select which one to purge:</p>
+                <div class="space-y-1">
+                  <template x-for="dup in purgeAllModal.duplicates" :key="dup.id">
+                    <label class="flex items-center gap-2 px-2 py-1.5 rounded-md border cursor-pointer transition text-xs"
+                      :class="purgeAllModal.channelId === dup.id ? 'border-red-700 bg-red-950/30 text-gh-text' : 'border-gh-border2 bg-gh-bg text-gh-muted hover:border-gh-dim'"
+                      @click="purgeAllModal.channelId = dup.id">
+                      <input type="radio" name="purge-dup" :value="dup.id" x-model="purgeAllModal.channelId" class="accent-red-600">
+                      <span><strong x-text="'#' + dup.name"></strong></span>
+                      <span class="text-gh-dim font-mono" x-text="dup.id"></span>
+                      <span x-show="dup.topic" class="text-gh-dim truncate max-w-[150px]" x-text="'— ' + dup.topic"></span>
+                    </label>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <div class="text-xs text-gh-muted space-y-1 mb-3">
+              <p class="text-gh-red font-medium">Permanently lost:</p>
+              <ul class="list-disc list-inside space-y-0.5 text-gh-dim">
+                <li>All message history</li>
+                <li>Pinned messages</li>
+                <li>Threads</li>
+                <li>Webhook URLs change — services using the old URLs will stop working</li>
+                <li>Channel ID changes — external references will break</li>
+              </ul>
+            </div>
+            <div class="text-xs text-gh-muted mb-3">
+              <p class="mb-1">Channel settings, permissions, and webhook names will be recreated. New webhook URLs will be shown after completion.</p>
+              <p class="mt-1 text-gh-dim">Note: Purge All does not count toward cleanup statistics. Use regular cleanup for tracked deletions.</p>
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" x-model="purgeAllModal.confirmed" class="rounded border-gh-border2 bg-gh-bg accent-red-600">
+              <span class="text-xs text-gh-muted">I understand this is permanent and cannot be undone</span>
+            </label>
+          </div>
+          <div class="flex justify-end gap-2 px-5 pb-4 pt-1">
+            <button @click="purgeAllModal.show = false" class="px-3 py-1.5 text-sm rounded-md border border-gh-border2 text-gh-muted hover:text-gh-text transition">Cancel</button>
+            <button @click="executePurgeAll()" :disabled="!purgeAllModal.confirmed || (purgeAllModal.duplicates && !purgeAllModal.channelId)"
+              class="px-3 py-1.5 text-sm rounded-md bg-red-700 text-white hover:bg-red-600 transition disabled:opacity-40 disabled:cursor-not-allowed">Purge All</button>
+          </div>
+        </div>
+      </template>
+      <!-- Running step -->
+      <template x-if="purgeAllModal.running">
+        <div class="px-5 py-8 text-center">
+          <div class="w-6 h-6 border-2 border-gh-dim border-t-gh-blue rounded-full animate-spin mx-auto mb-3"></div>
+          <p class="text-sm text-gh-muted">Recreating <strong class="text-gh-text">#<span x-text="purgeAllModal.channel"></span></strong>...</p>
+        </div>
+      </template>
+      <!-- Done step -->
+      <template x-if="purgeAllModal.done">
+        <div>
+          <div class="px-5 pt-5 pb-3">
+            <h3 class="text-base font-semibold text-gh-green mb-3">Channel Recreated</h3>
+            <p class="text-sm text-gh-muted mb-3"><strong class="text-gh-text">#<span x-text="purgeAllModal.channel"></span></strong> has been purged and recreated.</p>
+            <template x-if="purgeAllModal.webhooks.length > 0">
+              <div>
+                <p class="text-xs text-gh-muted mb-2 font-medium">New webhook URLs — copy them here or find them later in the Webhooks tab (enable Discover Webhooks in Settings).</p>
+                <div class="space-y-2">
+                  <template x-for="wh in purgeAllModal.webhooks" :key="wh.name">
+                    <div class="bg-gh-bg border border-gh-border2 rounded-md px-3 py-2">
+                      <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-medium text-gh-text" x-text="wh.name"></span>
+                        <button x-show="wh.url" @click="navigator.clipboard.writeText(wh.url).then(() => showToast('Copied URL for \'' + wh.name + '\''))"
+                          class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 text-gh-muted hover:text-gh-blue hover:border-gh-blue transition">Copy</button>
+                      </div>
+                      <div x-show="wh.url" class="text-[10px] text-gh-dim font-mono break-all" x-text="wh.url"></div>
+                      <div x-show="wh.error" class="text-[10px] text-gh-red" x-text="'Failed: ' + wh.error"></div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <template x-if="purgeAllModal.webhooks.length === 0">
+              <p class="text-xs text-gh-dim">No webhooks were associated with this channel.</p>
+            </template>
+          </div>
+          <div class="flex justify-end px-5 pb-4 pt-1">
+            <button @click="purgeAllModal.show = false" class="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-500 transition">Done</button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</template>
+
 <!-- Toast notifications -->
 <div x-show="toast" x-transition class="fixed bottom-6 right-6 px-4 py-2 rounded-lg text-sm font-medium shadow-lg z-50"
   :class="toastType === 'error' ? 'bg-red-900 text-gh-red border border-red-800' : 'bg-green-900 text-gh-green border border-green-800'"
@@ -1052,13 +1182,20 @@ function app() {
     // Statistics
     statsView: 'lastRun',
 
+    // Recovery
+    recoveryFiles: [],
+    recoverRunning: null,
+
+    // Purge All modal
+    purgeAllModal: { show: false, category: '', channel: '', channelId: null, confirmed: false, running: false, done: false, webhooks: [], duplicates: null },
+
     // Toast
     toast: '',
     toastType: 'success',
     toastTimer: null,
 
     async init() {
-      await Promise.all([this.loadStatus(), this.loadStats(), this.loadConfig()]);
+      await Promise.all([this.loadStatus(), this.loadStats(), this.loadConfig(), this.loadRecoveryFiles()]);
       // Show last run results in Cleanup tab (survives page refresh)
       // Don't load stale lastRun if a cleanup is currently active — progress events will build it
       if (this.stats.lastRun && !this.status.cleanupRunning) {
@@ -1848,6 +1985,83 @@ function app() {
       this.toastType = type;
       clearTimeout(this.toastTimer);
       this.toastTimer = setTimeout(() => { this.toast = ''; }, 3000);
+    },
+    async loadRecoveryFiles() {
+      try {
+        const res = await fetch('/api/cleanup/recovery');
+        if (res.ok) this.recoveryFiles = await res.json();
+      } catch {}
+    },
+    async executeRecover(file, name) {
+      this.recoverRunning = file;
+      try {
+        const res = await fetch('/api/cleanup/recover', {
+          method: 'POST',
+          headers: this.apiHeaders(),
+          body: JSON.stringify({ file }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          this.showToast(data.error || 'Recovery failed', 'error');
+          return;
+        }
+        this.showToast(`#${name} recovered successfully`);
+        await this.loadRecoveryFiles();
+        this.syncChannels();
+      } catch (err) {
+        this.showToast('Recovery failed: ' + err.message, 'error');
+      } finally {
+        this.recoverRunning = null;
+      }
+    },
+    isDuplicateChannel(cat, ch) {
+      const name = this.channelName(ch);
+      return (cat._channels || []).filter(c => this.channelName(c) === name).length > 1;
+    },
+    async openPurgeAll(category, channel) {
+      this.purgeAllModal = { show: true, category, channel, channelId: null, confirmed: false, running: false, done: false, webhooks: [], duplicates: null };
+      try {
+        const res = await fetch('/api/cleanup/resolve-channels?category=' + encodeURIComponent(category));
+        if (res.ok) {
+          const channels = await res.json();
+          const matches = channels.filter(c => c.name === channel);
+          if (matches.length === 1) {
+            this.purgeAllModal.channelId = matches[0].id;
+          } else if (matches.length > 1) {
+            this.purgeAllModal.duplicates = matches;
+          }
+        }
+      } catch {}
+    },
+    async executePurgeAll() {
+      if (!this.purgeAllModal.confirmed) return;
+      this.purgeAllModal.running = true;
+      this.purgeAllModal.done = false;
+      try {
+        const res = await fetch('/api/cleanup/purge-all', {
+          method: 'POST',
+          headers: this.apiHeaders(),
+          body: JSON.stringify({ category: this.purgeAllModal.category, channel: this.purgeAllModal.channel, channelId: this.purgeAllModal.channelId }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          this.purgeAllModal.running = false;
+          this.purgeAllModal.show = false;
+          this.showToast(data.error || 'Purge All failed', 'error');
+          this.loadRecoveryFiles();
+          return;
+        }
+        this.purgeAllModal.running = false;
+        this.purgeAllModal.done = true;
+        this.purgeAllModal.webhooks = data.webhooks || [];
+        this.syncChannels();
+        this.loadRecoveryFiles();
+      } catch (err) {
+        this.purgeAllModal.running = false;
+        this.purgeAllModal.show = false;
+        this.showToast('Purge All failed: ' + err.message, 'error');
+        this.loadRecoveryFiles();
+      }
     },
   };
 }

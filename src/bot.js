@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, ChannelType, PermissionsBitField } = require('discord.js');
 const yaml = require('js-yaml');
 const cron = require('node-cron');
 const fs = require('fs');
@@ -1338,6 +1338,224 @@ async function fetchGuildWebhooks() {
   };
 }
 
+// --- Purge All (channel recreate) ---
+
+async function purgeAllChannel(categoryName, channelName, channelId) {
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (!guild) throw new Error('Guild not available — bot may still be connecting');
+
+  await guild.channels.fetch();
+
+  let channel;
+  if (channelId) {
+    // Resolve by ID — safe, unambiguous
+    channel = guild.channels.cache.get(channelId);
+    if (!channel || channel.type !== ChannelType.GuildText) throw new Error(`Channel with ID ${channelId} not found or not a text channel`);
+  } else {
+    // Fallback: resolve by name — reject if ambiguous
+    const category = guild.channels.cache.find(
+      c => c.type === ChannelType.GuildCategory && c.name === categoryName
+    );
+    if (!category) throw new Error(`Category "${categoryName}" not found`);
+    const matches = guild.channels.cache.filter(
+      c => c.type === ChannelType.GuildText && c.parentId === category.id && c.name === channelName
+    );
+    if (matches.size === 0) throw new Error(`Channel "#${channelName}" not found in "${categoryName}"`);
+    if (matches.size > 1) throw new Error(`Multiple channels named "#${channelName}" — use the channel picker to select which one.`);
+    channel = matches.first();
+  }
+
+  // Snapshot everything we need to recreate
+  const snapshot = {
+    name: channel.name,
+    categoryName,
+    channelId: channel.id,
+    topic: channel.topic || undefined,
+    nsfw: channel.nsfw,
+    rateLimitPerUser: channel.rateLimitPerUser || 0,
+    position: channel.position,
+    parentId: channel.parentId,
+    permissionOverwrites: channel.permissionOverwrites.cache.map(po => ({
+      id: po.id,
+      type: po.type,
+      allow: po.allow.bitfield.toString(),
+      deny: po.deny.bitfield.toString(),
+    })),
+  };
+
+  // Snapshot webhooks (name only — URLs change on recreate)
+  const channelWebhooks = await channel.fetchWebhooks();
+  const webhookSnapshots = channelWebhooks
+    .filter(wh => wh.type === 1) // Only Incoming webhooks — Channel Follower and Application can't be recreated
+    .map(wh => ({ name: wh.name }));
+  snapshot.webhooks = webhookSnapshots;
+
+  // Persist snapshot to /config before deleting — recovery safety net
+  const recoveryDir = path.join(path.dirname(CONFIG_PATH), 'recovery');
+  if (!fs.existsSync(recoveryDir)) fs.mkdirSync(recoveryDir, { recursive: true });
+  const safeName = channel.name.replace(/[^\w-]/g, '_');
+  const recoveryPath = path.join(recoveryDir, `purge-all-${safeName}-${Date.now()}.json`);
+  fs.writeFileSync(recoveryPath, JSON.stringify(snapshot, null, 2));
+  fixOwnership(recoveryPath);
+  log('INFO', `Purge All: snapshot saved to ${recoveryPath}`);
+
+  log('INFO', `Purge All: deleting #${snapshot.name} in "${categoryName}" (${channelWebhooks.size} webhooks, ${snapshot.permissionOverwrites.length} permission overwrites)`);
+
+  // Delete the channel — point of no return
+  await channel.delete(`PurgeBot Purge All — recreating #${snapshot.name}`);
+
+  // Recreate with identical settings (retry up to 3 times — if this fails the channel is gone)
+  const createOpts = {
+    name: snapshot.name,
+    type: ChannelType.GuildText,
+    topic: snapshot.topic,
+    nsfw: snapshot.nsfw,
+    rateLimitPerUser: snapshot.rateLimitPerUser,
+    position: snapshot.position,
+    parent: snapshot.parentId,
+    permissionOverwrites: snapshot.permissionOverwrites.map(po => ({
+      id: po.id,
+      type: po.type,
+      allow: new PermissionsBitField(BigInt(po.allow)),
+      deny: new PermissionsBitField(BigInt(po.deny)),
+    })),
+    reason: `PurgeBot Purge All — recreated #${snapshot.name}`,
+  };
+  let newChannel;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      newChannel = await guild.channels.create(createOpts);
+      break;
+    } catch (createErr) {
+      log('ERROR', `Purge All: create attempt ${attempt}/3 failed: ${createErr.message}`);
+      if (attempt === 3) {
+        log('ERROR', `Purge All: CHANNEL LOST — failed to recreate #${snapshot.name}. Recovery file: ${recoveryPath}`);
+        throw new Error(`Channel deleted but recreation failed after 3 attempts: ${createErr.message}. Recovery file saved — use Recover in Settings to restore.`);
+      }
+      await sleep(1000 * attempt);
+    }
+  }
+
+  // Recreate webhooks
+  const newWebhooks = [];
+  const failedWebhooks = [];
+  for (const ws of webhookSnapshots) {
+    try {
+      const wh = await newChannel.createWebhook({ name: ws.name, reason: 'PurgeBot Purge All — recreated webhook' });
+      newWebhooks.push({ name: wh.name, url: wh.url });
+    } catch (err) {
+      log('WARN', `Purge All: failed to recreate webhook "${ws.name}": ${err.message}`);
+      failedWebhooks.push({ name: ws.name, error: err.message });
+    }
+  }
+
+  // Clean up recovery file on full success
+  if (failedWebhooks.length === 0) {
+    try { fs.unlinkSync(recoveryPath); } catch {}
+  } else {
+    log('WARN', `Purge All: ${failedWebhooks.length} webhook(s) failed — recovery file kept: ${recoveryPath}`);
+  }
+
+  log('INFO', `Purge All: recreated #${newChannel.name} (id: ${newChannel.id}) with ${newWebhooks.length} webhook(s), ${failedWebhooks.length} failed`);
+
+  return {
+    channelName: newChannel.name,
+    channelId: newChannel.id,
+    webhooks: [...newWebhooks, ...failedWebhooks.map(f => ({ name: f.name, url: null, error: f.error }))],
+  };
+}
+
+// --- Channel ID resolver (for Purge All disambiguation) ---
+
+async function resolveChannels(categoryName) {
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (!guild) throw new Error('Guild not available');
+  await guild.channels.fetch();
+
+  const category = guild.channels.cache.find(
+    c => c.type === ChannelType.GuildCategory && c.name === categoryName
+  );
+  if (!category) throw new Error(`Category "${categoryName}" not found`);
+
+  const channels = guild.channels.cache
+    .filter(c => c.type === ChannelType.GuildText && c.parentId === category.id)
+    .map(c => ({ id: c.id, name: c.name, position: c.position, topic: c.topic || '', parentId: category.id }))
+    .sort((a, b) => a.position - b.position);
+  return channels;
+}
+
+// --- Purge All Recovery ---
+
+const RECOVERY_DIR = path.join(path.dirname(CONFIG_PATH), 'recovery');
+
+function listRecoveryFiles() {
+  if (!fs.existsSync(RECOVERY_DIR)) return [];
+  return fs.readdirSync(RECOVERY_DIR)
+    .filter(f => f.startsWith('purge-all-') && f.endsWith('.json'))
+    .map(f => {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(RECOVERY_DIR, f), 'utf8'));
+        return { file: f, name: data.name, category: data.categoryName, webhooks: (data.webhooks || []).length, timestamp: parseInt(f.match(/-(\d+)\.json$/)?.[1] || '0') };
+      } catch { return null; }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.timestamp - a.timestamp);
+}
+
+async function recoverChannel(filename) {
+  const filePath = path.join(RECOVERY_DIR, filename);
+  if (!fs.existsSync(filePath)) throw new Error('Recovery file not found');
+
+  const snapshot = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (!guild) throw new Error('Guild not available');
+  await guild.channels.fetch();
+
+  // Check the channel doesn't already exist (it was already recovered)
+  const existing = guild.channels.cache.find(
+    c => c.type === ChannelType.GuildText && c.parentId === snapshot.parentId && c.name === snapshot.name
+  );
+  if (existing) throw new Error(`Channel #${snapshot.name} already exists in this category — it may have been recovered already.`);
+
+  const newChannel = await guild.channels.create({
+    name: snapshot.name,
+    type: ChannelType.GuildText,
+    topic: snapshot.topic,
+    nsfw: snapshot.nsfw,
+    rateLimitPerUser: snapshot.rateLimitPerUser || 0,
+    position: snapshot.position,
+    parent: snapshot.parentId,
+    permissionOverwrites: (snapshot.permissionOverwrites || []).map(po => ({
+      id: po.id,
+      type: po.type,
+      allow: new PermissionsBitField(BigInt(po.allow)),
+      deny: new PermissionsBitField(BigInt(po.deny)),
+    })),
+    reason: `PurgeBot Purge All — recovered #${snapshot.name} from snapshot`,
+  });
+
+  const newWebhooks = [];
+  for (const ws of (snapshot.webhooks || [])) {
+    try {
+      const wh = await newChannel.createWebhook({ name: ws.name, reason: 'PurgeBot Purge All — recovered webhook' });
+      newWebhooks.push({ name: wh.name, url: wh.url });
+    } catch (err) {
+      newWebhooks.push({ name: ws.name, url: null, error: err.message });
+    }
+  }
+
+  // Clean up recovery file only on full success (channel + all webhooks)
+  const failedWh = newWebhooks.filter(w => !w.url);
+  if (failedWh.length === 0) {
+    try { fs.unlinkSync(filePath); } catch {}
+  } else {
+    log('WARN', `Purge All recovery: ${failedWh.length} webhook(s) failed — keeping recovery file: ${filePath}`);
+  }
+  log('INFO', `Purge All: recovered #${newChannel.name} (id: ${newChannel.id}) from ${filename}`);
+
+  return { channelName: newChannel.name, channelId: newChannel.id, webhooks: newWebhooks };
+}
+
 // --- Module Exports (for UI server) ---
 
 function isCleanupRunning() { return cleanupRunning; }
@@ -1354,7 +1572,7 @@ module.exports = {
   version, config, client, logEmitter, loadConfig, runCleanup, syncConfig, setupCron,
   CONFIG_HEADER, CONFIG_PATH, STATS_PATH, fixOwnership, configForDisk, log, LOG_DIR,
   isCleanupRunning, isCleanupCancelling, getCleanupStartTime, cancelCleanup, writeHeartbeat, getConfiguredChannels,
-  getRetention, getRetentionSource, formatRetention, fetchGuildWebhooks,
+  getRetention, getRetentionSource, formatRetention, fetchGuildWebhooks, purgeAllChannel, listRecoveryFiles, recoverChannel, resolveChannels,
 };
 
 // --- Main ---

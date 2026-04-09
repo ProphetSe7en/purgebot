@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 const bot = require('../../bot');
 
-// Guard: reject if cleanup or sync already running
+// Guard: reject if cleanup, sync, or purge-all already running
 let syncRunning = false;
+let purgeAllRunning = false;
 
 // POST /api/cleanup/run — trigger cleanup (optional: {category} for single-category run)
 router.post('/run', (req, res) => {
@@ -59,6 +60,54 @@ router.post('/dryrun', (req, res) => {
   res.json({ ok: true, message: `Dry-run started for ${label}` });
 });
 
+// POST /api/cleanup/purge-all — delete and recreate a channel (manual only)
+router.post('/purge-all', async (req, res) => {
+  if (!bot.client.isReady()) {
+    return res.status(503).json({ error: 'Discord not connected' });
+  }
+  if (bot.isCleanupRunning() || syncRunning || purgeAllRunning) {
+    return res.status(409).json({ error: 'Another operation is already running' });
+  }
+
+  const { category, channel, channelId } = req.body || {};
+  if (!category || !channel) {
+    return res.status(400).json({ error: 'Both category and channel are required' });
+  }
+
+  purgeAllRunning = true;
+  try {
+    const result = await bot.purgeAllChannel(category, channel, channelId || null);
+    bot.log('INFO', `UI-triggered Purge All complete for #${channel}`);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    bot.log('ERROR', `Purge All failed for #${channel}: ${err.message}`);
+    // Discord error 50013 = Missing Permissions
+    if (err.code === 50013) {
+      return res.status(403).json({ error: 'Bot lacks Manage Channels or Manage Webhooks permission.' });
+    }
+    res.status(500).json({ error: err.message });
+  } finally {
+    purgeAllRunning = false;
+  }
+});
+
+// GET /api/cleanup/resolve-channels?category=Name — return channels with IDs for a category
+router.get('/resolve-channels', async (req, res) => {
+  if (!bot.client.isReady()) {
+    return res.status(503).json({ error: 'Discord not connected' });
+  }
+  const { category } = req.query;
+  if (!category) {
+    return res.status(400).json({ error: 'Category name is required' });
+  }
+  try {
+    const channels = await bot.resolveChannels(category);
+    res.json(channels);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/cleanup/cancel — cancel a running cleanup
 router.post('/cancel', (req, res) => {
   if (!bot.isCleanupRunning()) {
@@ -66,6 +115,42 @@ router.post('/cancel', (req, res) => {
   }
   const cancelled = bot.cancelCleanup();
   res.json({ ok: cancelled });
+});
+
+// GET /api/cleanup/recovery — list recovery snapshots
+router.get('/recovery', (req, res) => {
+  res.json(bot.listRecoveryFiles());
+});
+
+// POST /api/cleanup/recover — recreate a channel from a recovery snapshot
+router.post('/recover', async (req, res) => {
+  if (!bot.client.isReady()) {
+    return res.status(503).json({ error: 'Discord not connected' });
+  }
+  if (bot.isCleanupRunning() || syncRunning || purgeAllRunning) {
+    return res.status(409).json({ error: 'Another operation is already running' });
+  }
+
+  const { file } = req.body || {};
+  if (!file) {
+    return res.status(400).json({ error: 'Recovery file name is required' });
+  }
+  // Sanitize: only allow expected filename pattern
+  if (!/^purge-all-[\w-]+-\d+\.json$/.test(file)) {
+    return res.status(400).json({ error: 'Invalid recovery file name' });
+  }
+
+  purgeAllRunning = true;
+  try {
+    const result = await bot.recoverChannel(file);
+    bot.log('INFO', `UI-triggered recovery complete for #${result.channelName}`);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    bot.log('ERROR', `Recovery failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  } finally {
+    purgeAllRunning = false;
+  }
 });
 
 module.exports = router;

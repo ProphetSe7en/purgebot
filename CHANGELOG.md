@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.2.3
+
+### Features
+
+- **Purge All** — New per-channel button that deletes and recreates a channel
+  to instantly clear all message history. Recreates channel settings,
+  permissions, and webhooks. New webhook URLs shown in a result modal.
+- **Duplicate channel safety** — When multiple channels share the same name,
+  a picker with channel IDs and topics lets you select the correct one.
+- **Recovery system** — If channel recreation fails, a snapshot is saved to
+  `/config/recovery/`. A Recovery section appears in Settings to restore
+  the channel with one click.
+
+### UI
+
+- **Cleanup/Purge All button styling** — Cleanup buttons are green, Purge All
+  is red. Clear visual distinction between safe retention-based cleanup and
+  destructive full purge.
+- **"Discover Webhooks" label** — Renamed from "Webhook Discovery" for
+  consistency with other settings labels.
+- **Number input spinners removed** — All numeric inputs now require typing
+  values directly (no up/down arrows).
+- **Max Old Deletes description** — Now shows timing guidance
+  (e.g., "200 ≈ 80s per channel").
+
+### API
+
+- `POST /api/cleanup/purge-all` — Delete and recreate a channel
+- `GET /api/cleanup/resolve-channels?category=Name` — List channels with IDs
+- `GET /api/cleanup/recovery` — List recovery snapshots
+- `POST /api/cleanup/recover` — Restore a channel from a recovery snapshot
+
 ## v1.2.2
 
 ### UI
