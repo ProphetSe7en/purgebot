@@ -1041,6 +1041,7 @@
             </div>
             <div class="text-xs text-gh-muted mb-3">
               <p class="mb-1">Channel settings, permissions, and webhook names will be recreated. New webhook URLs will be shown after completion.</p>
+              <p class="mt-1 text-gh-dim">Webhook URLs cannot be copied from Discord for bot-created webhooks — copy them from the result dialog or the Webhooks tab.</p>
               <p class="mt-1 text-gh-dim">Note: Purge All does not count toward cleanup statistics. Use regular cleanup for tracked deletions.</p>
             </div>
             <label class="flex items-center gap-2 cursor-pointer">
@@ -1076,7 +1077,7 @@
                     <div class="bg-gh-bg border border-gh-border2 rounded-md px-3 py-2">
                       <div class="flex items-center justify-between mb-1">
                         <span class="text-xs font-medium text-gh-text" x-text="wh.name"></span>
-                        <button x-show="wh.url" @click="navigator.clipboard.writeText(wh.url).then(() => showToast('Copied URL for \'' + wh.name + '\''))"
+                        <button x-show="wh.url" @click="copyWebhookUrl(wh.url, wh.name)"
                           class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 text-gh-muted hover:text-gh-blue hover:border-gh-blue transition">Copy</button>
                       </div>
                       <div x-show="wh.url" class="text-[10px] text-gh-dim font-mono break-all" x-text="wh.url"></div>
