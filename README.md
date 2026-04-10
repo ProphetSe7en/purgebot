@@ -62,8 +62,22 @@ Built for servers with many channels (media automation, homelab, development) wh
    - Under **Privileged Gateway Intents**, enable **Message Content Intent**
 4. Go to **OAuth2 > URL Generator**:
    - **Scopes:** select `bot`
-   - **Bot Permissions:** select `Administrator` (simplest — needed for private channels), or at minimum: `View Channels`, `Read Message History`, `Manage Messages`, `Manage Channels` (for Purge All), `Manage Webhooks` (for webhook discovery + Purge All webhook recreation)
+   - **Bot Permissions:** select `Administrator` (simplest — needed for private channels), or select only the permissions you need from the table below
 5. Copy the generated URL, open it in your browser, select your server, and authorize
+
+#### Permissions by Feature
+
+Select `Administrator` for full access, or pick individual permissions based on which features you use:
+
+| Feature | View Channels | Read Message History | Manage Messages | Manage Channels | Manage Webhooks | Manage Roles |
+|---------|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Cleanup** | ✓ | ✓ | ✓ | | | |
+| **Sync / Discovery** | ✓ | | | | | |
+| **Purge All** | ✓ | | | ✓ | ✓ | ✓ |
+| **Webhook Discovery** | ✓ | | | | ✓ | |
+| **Channel & Category Sorting** | ✓ | | | ✓ | | |
+
+> **Note:** `View Channels` is required for all features. `Manage Roles` is only needed if Purge All should recreate permission overwrites on the new channel.
 
 > **Finding your Guild ID:** Enable Developer Mode in Discord (Settings > Advanced > Developer Mode), then right-click your server name and click "Copy Server ID". This is your `GUILD_ID`.
 
