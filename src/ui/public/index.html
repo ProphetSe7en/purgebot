@@ -663,6 +663,48 @@
       <h2 class="text-lg font-semibold text-gh-text mb-1">Discord Tools</h2>
       <p class="text-sm text-gh-muted mb-4">Server management features beyond message cleanup.</p>
 
+      <!-- Permissions Check -->
+      <div class="bg-gh-bg border border-gh-border rounded-lg mb-3 overflow-hidden">
+        <button @click="settingsExpand.permissions = !settingsExpand.permissions" class="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition cursor-pointer">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-gh-text">Permissions</h3>
+            <span class="text-xs text-gh-dim" x-text="permCheck ? (permCheck.isAdmin ? 'Administrator' : 'Limited') : ''"></span>
+          </div>
+          <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="settingsExpand.permissions && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div x-show="settingsExpand.permissions" x-collapse class="px-4 pb-4 border-t border-gh-border">
+          <div class="flex items-center gap-3 py-3">
+            <button @click="checkPerms()" :disabled="permChecking"
+              class="text-xs px-3 py-1.5 rounded-md border border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue transition disabled:opacity-50"
+              x-text="permChecking ? 'Checking...' : 'Check Permissions'"></button>
+            <span x-show="permCheck?.isAdmin" class="text-xs text-gh-green">Administrator — all features available</span>
+          </div>
+          <template x-if="permCheck && !permCheck.isAdmin">
+            <div>
+              <div class="text-xs text-gh-dim mb-2">Bot permissions on this server:</div>
+              <div class="grid gap-1 mb-3" style="grid-template-columns: 1fr 1fr">
+                <template x-for="[name, has] in Object.entries(permCheck.permissions).filter(([n]) => n !== 'Administrator')" :key="name">
+                  <div class="flex items-center gap-2 text-xs py-0.5">
+                    <span class="w-2 h-2 rounded-full shrink-0" :class="has ? 'bg-gh-green' : 'bg-gh-red'"></span>
+                    <span :class="has ? 'text-gh-text' : 'text-gh-red'" x-text="name.replace(/([A-Z])/g, ' $1').trim()"></span>
+                  </div>
+                </template>
+              </div>
+              <div class="text-xs text-gh-dim mb-2">Feature availability:</div>
+              <div class="space-y-1">
+                <template x-for="[name, ok] in Object.entries(permCheck.features)" :key="name">
+                  <div class="flex items-center gap-2 text-xs py-0.5">
+                    <span class="w-2 h-2 rounded-full shrink-0" :class="ok ? 'bg-gh-green' : 'bg-gh-red'"></span>
+                    <span :class="ok ? 'text-gh-text' : 'text-gh-red'" x-text="name === 'purgeAll' ? 'Purge All' : name === 'webhookDiscovery' ? 'Webhook Discovery' : name.charAt(0).toUpperCase() + name.slice(1)"></span>
+                    <span x-show="!ok" class="text-gh-dim">— missing permissions</span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
       <!-- Webhook Discovery (collapsible) -->
       <div class="bg-gh-bg border border-gh-border rounded-lg mb-3 overflow-hidden">
         <button @click="settingsExpand.webhookDiscovery = !settingsExpand.webhookDiscovery" class="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition cursor-pointer">
@@ -1428,7 +1470,9 @@ function app() {
     retentionMenu: null, // 'catName-idx' key of open dropdown
     retentionCustom: '',
     sortModal: { show: false, mode: 'both', included: [], results: null, running: false },
-    settingsExpand: { discord: false, gotify: false, webhookDiscovery: false, sorting: false },
+    settingsExpand: { discord: false, gotify: false, permissions: false, webhookDiscovery: false, sorting: false },
+    permCheck: null,
+    permChecking: false,
     openCategories: [],
     syncRunning: false,
     syncResults: null,
@@ -1657,6 +1701,20 @@ function app() {
       } finally {
         this.gotifyTesting = false;
       }
+    },
+    async checkPerms() {
+      this.permChecking = true;
+      try {
+        const r = await fetch('/api/cleanup/permissions');
+        if (r.ok) {
+          this.permCheck = await r.json();
+        } else {
+          this.showToast('Failed to check permissions', 'error');
+        }
+      } catch {
+        this.showToast('Failed to check permissions', 'error');
+      }
+      this.permChecking = false;
     },
     async loadWebhooks() {
       this.webhooksLoading = true;

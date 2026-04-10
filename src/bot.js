@@ -1824,8 +1824,38 @@ module.exports = {
   CONFIG_HEADER, CONFIG_PATH, STATS_PATH, fixOwnership, configForDisk, log, LOG_DIR,
   isCleanupRunning, isCleanupCancelling, getCleanupStartTime, cancelCleanup, writeHeartbeat, getConfiguredChannels,
   getRetention, getRetentionSource, formatRetention, fetchGuildWebhooks, purgeAllChannel, listRecoveryFiles, recoverChannel, resolveChannels,
-  sortServer, isSortRunning: () => sortRunning,
+  sortServer, isSortRunning: () => sortRunning, checkPermissions,
 };
+
+function checkPermissions() {
+  const guild = client.guilds.cache.first();
+  if (!guild) throw new Error('Not connected to a guild');
+  const me = guild.members.me;
+  if (!me) throw new Error('Bot member not available');
+
+  const perms = me.permissions;
+  const check = (flag) => perms.has(flag);
+
+  const permissions = {
+    ViewChannel: check(PermissionsBitField.Flags.ViewChannel),
+    ReadMessageHistory: check(PermissionsBitField.Flags.ReadMessageHistory),
+    ManageMessages: check(PermissionsBitField.Flags.ManageMessages),
+    ManageChannels: check(PermissionsBitField.Flags.ManageChannels),
+    ManageWebhooks: check(PermissionsBitField.Flags.ManageWebhooks),
+    ManageRoles: check(PermissionsBitField.Flags.ManageRoles),
+    Administrator: check(PermissionsBitField.Flags.Administrator),
+  };
+
+  const features = {
+    cleanup: permissions.ViewChannel && permissions.ReadMessageHistory && permissions.ManageMessages,
+    sync: permissions.ViewChannel,
+    purgeAll: permissions.ViewChannel && permissions.ManageChannels && permissions.ManageWebhooks && permissions.ManageRoles,
+    webhookDiscovery: permissions.ViewChannel && permissions.ManageWebhooks,
+    sorting: permissions.ViewChannel && permissions.ManageChannels,
+  };
+
+  return { permissions, features, isAdmin: permissions.Administrator };
+}
 
 // --- Main ---
 

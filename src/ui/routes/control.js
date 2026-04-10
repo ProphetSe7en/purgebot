@@ -180,4 +180,16 @@ router.post('/sort', async (req, res) => {
   }
 });
 
+// GET /api/cleanup/permissions — check bot permissions
+router.get('/permissions', (req, res) => {
+  if (!bot.client.isReady()) {
+    return res.status(503).json({ error: 'Discord not connected' });
+  }
+  try {
+    res.json(bot.checkPermissions());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
