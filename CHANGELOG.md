@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.3.0
+
+### Features
+
+- **UI redesign** — Centered layout (960px max-width), Settings tab with sidebar navigation (Cleanup, Notifications, Schedule, Discord Tools, General). Tabs reduced from 8 to 7 (Schedule moved to Settings).
+- **Per-channel retention dropdown** — Replaces toggle + input with single dropdown: Default (inherit category), Skip (never delete), or Custom (enter days). Shows effective delete range (>7d, 7-14d, etc.) based on retention + deleteOld combination.
+- **Channel & Category Sorting** — Sort Discord server categories and channels alphabetically. Manual via Sort Now button or automatic after scheduled cleanup. Per-category opt-in toggles. Pinned positions (lock categories to first, last, or specific position).
+- **Category grid overview** — Fixed columns (Category, Deletes, Overrides, Cleanup, Sort, Pin) replace variable-width text. Feature status visible at a glance without expanding.
+- **Scheduled post-cleanup tasks** — After each scheduled cleanup: auto-sync (discover new channels), optional webhook discovery scan, optional auto-sort. Sort notifications sent to info webhook + Gotify.
+- **Collapsible settings cards** — Notifications (Discord, Gotify) and Discord Tools (Webhook Discovery, Channel & Category Sorting) use expandable cards with status badges.
+
+### Improvements
+
+- **Deletes column** — Shows effective delete range based on retention + deleteOld: >0d (delete all), 7-14d (partial), — (nothing happens). Yellow warning when config is ineffective.
+- **Descriptive labels** — "Enabled" → "Cleanup", "Default retention" → "Max age", "Include in sort" → "Sort channels". Tooltips on all controls.
+- **Bulk sort actions** — Enable All / Disable All for sort inclusion alongside cleanup actions.
+- **Smoother statistics charts** — No visible data points, increased curve tension.
+- **Run History grid** — Fixed columns for date, badge, purged count, duration.
+- **Webhooks tab** — Improved text visibility.
+- **Consistent status labels** — Discord and Gotify both show "Enabled/Disabled".
+
+### Bug fixes
+
+- **Duplicate channel rendering** — Channels with the same name now render correctly in cleanup results (unique Alpine keys).
+- **Recovery section** — No longer visible on all tabs (moved inside Settings).
+- **Sort position overflow** — Per-channel setPosition instead of bulk to avoid Discord int32 limit.
+- **Retention dropdown reactivity** — Uses splice() for proper Alpine detection.
+- **Mass edit toast grammar** — "7 days" instead of "7 day".
+
 ## v1.2.3
 
 ### Features

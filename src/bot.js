@@ -64,6 +64,12 @@ function loadConfig(exitOnError = true) {
     parsed.scheduleEnabled = parsed.scheduleEnabled !== false;
     parsed.display = parsed.display || {};
     parsed.display.timeFormat = parsed.display.timeFormat || '24h';
+    parsed.sortEnabled = !!parsed.sortEnabled;
+    parsed.sortAfterCleanup = !!parsed.sortAfterCleanup;
+    parsed.sortIncludeVoice = !!parsed.sortIncludeVoice;
+    parsed.sortInclude = parsed.sortInclude || {};
+    parsed.sortPinned = parsed.sortPinned || {};
+    parsed.webhookDiscoveryOnSchedule = !!parsed.webhookDiscoveryOnSchedule;
     parsed.categories = parsed.categories || {};
 
     // Warn about deprecated overrides: sections (#8)
@@ -603,6 +609,61 @@ async function sendDiscoveryNotification(discoveries) {
   await sendGotify('PurgeBot: Channel Auto-Discovery', description, 'info');
 }
 
+// --- Sort Notification ---
+
+async function sendSortNotification(results) {
+  const lines = [];
+
+  // Category moves
+  if (results.categories.length > 0) {
+    lines.push(`**Categories sorted** — ${results.categories.length} repositioned`);
+    for (const cat of results.categories) {
+      lines.push(`· ${cat.name}: position ${cat.from} → ${cat.to}`);
+    }
+  }
+
+  // Channel moves per category
+  for (const catGroup of results.channels) {
+    lines.push(`\n**${catGroup.category}** — ${catGroup.moves.length} channel${catGroup.moves.length !== 1 ? 's' : ''} sorted`);
+  }
+
+  if (lines.length === 0) return;
+
+  let description = lines.join('\n');
+  if (description.length > 4000) {
+    description = description.substring(0, 3990) + '\n... (truncated)';
+  }
+
+  // Discord notification — use info webhook
+  const webhookUrl = config.webhooks.info;
+  if (webhookUrl) {
+    const infoColor = parseInt((config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12;
+    const embed = {
+      title: 'Server Sort',
+      description,
+      color: infoColor,
+      footer: { text: `${results.totalMoves} item${results.totalMoves !== 1 ? 's' : ''} moved · PurgeBot v${version} by ProphetSe7en` },
+      timestamp: new Date().toISOString(),
+    };
+    try {
+      const res = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ embeds: [embed] }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        log('WARN', `Sort notification webhook response: ${res.status} — ${body}`);
+      }
+    } catch (err) {
+      log('ERROR', `Sort notification webhook failed: ${err.message}`);
+    }
+  }
+
+  // Gotify notification
+  await sendGotify('PurgeBot: Server Sort', description, 'info');
+}
+
 // --- Gotify Notification ---
 
 async function sendGotify(title, message, level = 'info') {
@@ -741,6 +802,7 @@ function persistStats(lastRun, { partial = false } = {}) {
 let cleanupRunning = false;
 let cleanupCancelled = false;
 let cleanupStartTime = null;
+let sortRunning = false;
 
 async function runCleanup(options = {}) {
   const { forceDryRun = false, forceLive = false, categoryFilter = null, channelFilter = null, trigger = 'schedule' } = options;
@@ -1033,6 +1095,47 @@ async function runCleanup(options = {}) {
 
     // Send summary notification to info webhook (live runs only)
     await sendSummaryNotification(runStats);
+
+    // Post-cleanup tasks (scheduled runs only, not manual, not dry-run)
+    if (!effectiveDryRun && trigger === 'schedule') {
+
+      // 1. Auto-sync — discover new/removed channels before sorting
+      try {
+        log('INFO', 'Post-cleanup sync: checking for channel changes...');
+        await syncConfig({ exitOnError: false });
+      } catch (err) {
+        log('ERROR', `Post-cleanup sync failed: ${err.message}`);
+      }
+
+      // 2. Webhook discovery — log server webhooks
+      if (config.webhookDiscoveryOnSchedule) {
+        try {
+          const whData = await fetchGuildWebhooks();
+          log('INFO', `Webhook discovery: ${whData.total} webhook${whData.total !== 1 ? 's' : ''} across ${whData.categories.length} categor${whData.categories.length !== 1 ? 'ies' : 'y'}`);
+        } catch (err) {
+          log('ERROR', `Webhook discovery failed: ${err.message}`);
+        }
+      }
+
+      // 3. Auto-sort — sort categories and channels
+      if (config.sortEnabled && config.sortAfterCleanup) {
+        sortRunning = true;
+        try {
+          const allCats = Object.keys(config.categories || {});
+          const included = config.sortInclude || {};
+          const skipCats = allCats.filter(name => !included[name]);
+          const sortResults = await sortServer({ mode: 'both', dryRun: false, skipChannelsInCategories: skipCats, includeVoice: !!config.sortIncludeVoice, pinnedPositions: config.sortPinned || {} });
+          if (sortResults.totalMoves > 0) {
+            log('INFO', `Auto-sort: ${sortResults.totalMoves} items sorted`);
+            await sendSortNotification(sortResults);
+          }
+        } catch (err) {
+          log('ERROR', `Auto-sort failed: ${err.message}`);
+        } finally {
+          sortRunning = false;
+        }
+      }
+    }
 
     // Notify UI via SSE that cleanup is complete
     logEmitter.emit('cleanup-complete', runStats);
@@ -1568,11 +1671,160 @@ function cancelCleanup() {
   return true;
 }
 
+// --- Channel/Category Sorting ---
+
+async function sortServer({ mode = 'both', dryRun = false, skipChannelsInCategories = [], includeVoice = false, pinnedPositions = {} } = {}) {
+  const guild = client.guilds.cache.first();
+  if (!guild) throw new Error('Not connected to a guild');
+  await guild.channels.fetch();
+
+  const results = { categories: [], channels: [], totalMoves: 0 };
+  // skipChannelsInCategories only affects channel sorting within categories,
+  // NOT category reordering (which always sorts all categories alphabetically).
+  const skipSet = new Set(skipChannelsInCategories);
+
+  // Sort categories — pinned categories go to their designated position,
+  // remaining categories sorted alphabetically around them.
+  if (mode === 'categories' || mode === 'both') {
+    // Optionally exclude voice-only categories (no text channels)
+    const hasTextChannels = (cat) => guild.channels.cache
+      .some(c => c.parentId === cat.id && c.type === ChannelType.GuildText);
+    const catFilter = (c) => c.type === ChannelType.GuildCategory && (includeVoice || hasTextChannels(c));
+
+    const allCats = [...guild.channels.cache.filter(catFilter).values()];
+
+    // Separate pinned from unpinned, sort unpinned alphabetically
+    const pinned = []; // { cat, pos }
+    const unpinned = [];
+    for (const cat of allCats) {
+      const raw = pinnedPositions[cat.name];
+      if (raw !== undefined && raw !== null && raw !== '') {
+        const pos = parseInt(raw, 10);
+        if (!isNaN(pos)) {
+          pinned.push({ cat, pos });
+          continue;
+        }
+      }
+      unpinned.push(cat);
+    }
+    unpinned.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Build final order: place pinned at their positions, fill gaps with unpinned
+    const total = allCats.length;
+    const sorted = new Array(total);
+    const lastPinned = pinned.filter(p => p.pos === -1);
+    const fixedPinned = pinned.filter(p => p.pos >= 0).sort((a, b) => a.pos - b.pos);
+
+    // Place fixed-position pins — find nearest open slot on conflict
+    const findSlot = (start, dir = 1) => {
+      for (let j = start; j >= 0 && j < total; j += dir) {
+        if (!sorted[j]) return j;
+      }
+      // Fallback: search opposite direction
+      for (let j = start; j >= 0 && j < total; j -= dir) {
+        if (!sorted[j]) return j;
+      }
+      return -1;
+    };
+
+    for (const p of fixedPinned) {
+      const idx = Math.min(p.pos, total - 1);
+      const slot = findSlot(idx, 1);
+      if (slot >= 0) sorted[slot] = p.cat;
+    }
+
+    // Fill remaining slots with unpinned (alphabetical), leaving room for lastPinned at end
+    let ui = 0;
+    for (let i = 0; i < total; i++) {
+      if (!sorted[i] && ui < unpinned.length) {
+        sorted[i] = unpinned[ui++];
+      }
+    }
+
+    // Place "last" pinned in remaining empty slots at end
+    for (const p of lastPinned) {
+      const slot = findSlot(total - 1, -1);
+      if (slot >= 0) sorted[slot] = p.cat;
+    }
+
+    // Safety: filter out any undefined entries (shouldn't happen, but defensive)
+    const finalSorted = sorted.filter(Boolean);
+    const currentOrder = [...allCats].sort((a, b) => a.rawPosition - b.rawPosition);
+
+    for (let i = 0; i < finalSorted.length; i++) {
+      if (finalSorted[i].id !== currentOrder[i]?.id) {
+        results.categories.push({ name: finalSorted[i].name, from: currentOrder.findIndex(c => c.id === finalSorted[i].id), to: i });
+        results.totalMoves++;
+      }
+    }
+    if (!dryRun && results.categories.length > 0) {
+      let sortErrors = 0;
+      for (let i = 0; i < finalSorted.length; i++) {
+        await finalSorted[i].setPosition(i).catch(err => {
+          sortErrors++;
+          log('WARN', `Failed to set position for category "${finalSorted[i].name}": ${err.message}`);
+        });
+      }
+      log('INFO', `Sorted ${results.categories.length} categories${sortErrors > 0 ? ` (${sortErrors} errors)` : ''}`);
+    }
+  }
+
+  // Sort channels within each included category
+  if (mode === 'channels' || mode === 'both') {
+    const categories = [...guild.channels.cache
+      .filter(c => c.type === ChannelType.GuildCategory)
+      .values()]
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const category of categories) {
+      if (skipSet.has(category.name)) continue;
+
+      const sorted = [...guild.channels.cache
+        .filter(c => c.parentId === category.id && c.type === ChannelType.GuildText)
+        .values()]
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      const currentOrder = [...guild.channels.cache
+        .filter(c => c.parentId === category.id && c.type === ChannelType.GuildText)
+        .values()]
+        .sort((a, b) => a.rawPosition - b.rawPosition);
+
+      const moves = [];
+      for (let i = 0; i < sorted.length; i++) {
+        if (sorted[i].id !== currentOrder[i]?.id) {
+          moves.push({ name: sorted[i].name, from: currentOrder.findIndex(c => c.id === sorted[i].id), to: i });
+        }
+      }
+
+      if (moves.length > 0) {
+        results.channels.push({ category: category.name, moves });
+        results.totalMoves += moves.length;
+
+        if (!dryRun) {
+          let chErrors = 0;
+          for (let i = 0; i < sorted.length; i++) {
+            await sorted[i].setPosition(i, { relative: false }).catch(err => {
+              chErrors++;
+              log('WARN', `Failed to set position for #${sorted[i].name}: ${err.message}`);
+            });
+          }
+          log('INFO', `Sorted ${moves.length} channels in "${category.name}"${chErrors > 0 ? ` (${chErrors} errors)` : ''}`);
+        }
+      }
+    }
+  }
+
+  const action = dryRun ? 'would move' : 'moved';
+  log('INFO', `Sort ${dryRun ? 'dry-run' : 'complete'}: ${results.totalMoves} ${action} (mode: ${mode})`);
+  return results;
+}
+
 module.exports = {
   version, config, client, logEmitter, loadConfig, runCleanup, syncConfig, setupCron,
   CONFIG_HEADER, CONFIG_PATH, STATS_PATH, fixOwnership, configForDisk, log, LOG_DIR,
   isCleanupRunning, isCleanupCancelling, getCleanupStartTime, cancelCleanup, writeHeartbeat, getConfiguredChannels,
   getRetention, getRetentionSource, formatRetention, fetchGuildWebhooks, purgeAllChannel, listRecoveryFiles, recoverChannel, resolveChannels,
+  sortServer, isSortRunning: () => sortRunning,
 };
 
 // --- Main ---

@@ -39,6 +39,58 @@
   ::-webkit-scrollbar-track { background: #0d1117; }
   ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
   ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+  /* Centered content container */
+  .content-wrap { max-width: 960px; margin: 0 auto; }
+  /* Settings sidebar */
+  .settings-layout { display: flex; gap: 0; min-height: 400px; }
+  .settings-sidebar { width: 170px; flex-shrink: 0; border-right: 1px solid #21262d; padding-top: 8px; }
+  .settings-nav {
+    display: block; padding: 9px 16px; font-size: 13px; color: #8b949e;
+    cursor: pointer; border-left: 3px solid transparent; transition: color 0.15s, background 0.15s;
+  }
+  .settings-nav:hover { color: #e1e4e8; background: rgba(255,255,255,0.02); }
+  .settings-nav-active { color: #e1e4e8; border-left-color: #3fb950; background: rgba(255,255,255,0.03); }
+  .settings-content { flex: 1; padding: 8px 0 0 24px; }
+  /* Retention dropdown */
+  .ret-wrap { position: relative; }
+  .ret-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 4px; font-size: 10px;
+    cursor: pointer; border: 1px solid; white-space: nowrap; transition: all 0.15s;
+    min-width: 68px; justify-content: space-between;
+  }
+  .ret-default { color: #58a6ff; border-color: rgba(88,166,255,0.3); background: rgba(88,166,255,0.08); }
+  .ret-skip { color: #8b949e; border-color: #30363d; background: #21262d; }
+  .ret-custom { color: #bc8cff; border-color: rgba(188,140,255,0.3); background: rgba(188,140,255,0.08); }
+  .ret-arrow { font-size: 8px; opacity: 0.6; }
+  .ret-menu {
+    position: fixed; z-index: 50; min-width: 180px;
+    background: #1c2128; border: 1px solid #30363d;
+    border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  .ret-opt {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; font-size: 12px; cursor: pointer;
+  }
+  .ret-opt:hover { background: rgba(255,255,255,0.05); }
+  .ret-opt-active { background: rgba(88,166,255,0.08); }
+  .ret-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .ret-check { color: #58a6ff; font-size: 14px; width: 14px; text-align: center; margin-left: auto; }
+  .ret-custom-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 12px; border-top: 1px solid #21262d;
+  }
+  .ret-custom-input {
+    width: 50px; padding: 3px 6px; text-align: center;
+    background: #0d1117; border: 1px solid #30363d; border-radius: 4px;
+    color: #e1e4e8; font-size: 12px; outline: none;
+  }
+  .ret-custom-input:focus { border-color: #58a6ff; }
+  .ret-custom-apply {
+    padding: 2px 8px; font-size: 10px; border-radius: 4px;
+    background: #238636; border: none; color: #fff; cursor: pointer; margin-left: auto;
+  }
+  .ret-custom-apply:hover { background: #2ea043; }
 </style>
 </head>
 <body class="bg-gh-bg text-gh-text min-h-screen" x-data="app()" x-init="init()">
@@ -92,7 +144,7 @@
 </nav>
 
 <!-- Global unsaved changes banner -->
-<div x-show="configDirty" x-cloak class="px-6 pt-4">
+<div x-show="configDirty" x-cloak class="px-6 pt-4 content-wrap">
   <div class="flex items-center justify-between bg-yellow-900/20 border border-yellow-800 rounded-lg px-4 py-2">
     <span class="text-sm text-gh-yellow">You have unsaved changes</span>
     <div class="flex gap-2">
@@ -103,7 +155,7 @@
 </div>
 
 <!-- ===== OVERVIEW TAB ===== -->
-<div x-show="tab === 'overview'" x-cloak class="p-6">
+<div x-show="tab === 'overview'" x-cloak class="p-6 content-wrap">
   <!-- Stat cards -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
     <div @click="showCategoryList = !showCategoryList" class="bg-gh-card border border-gh-border rounded-lg p-4 cursor-pointer hover:border-gh-blue transition">
@@ -133,20 +185,31 @@
 
   <!-- Category Manager -->
   <div x-show="showCategoryList" x-collapse class="mb-5">
-    <div class="flex items-center justify-between mb-2">
-      <span class="text-xs text-gh-muted" x-text="Object.values(editConfig.categories || {}).filter(c => c.enabled).length + '/' + Object.keys(editConfig.categories || {}).length + ' enabled'"></span>
-      <div class="flex gap-2">
-        <button @click="Object.values(editConfig.categories).forEach(c => c.enabled = true); configDirty = true"
-          class="text-xs px-2.5 py-1 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-green hover:border-green-800 transition">Enable All</button>
-        <button @click="Object.values(editConfig.categories).forEach(c => c.enabled = false); configDirty = true"
-          class="text-xs px-2.5 py-1 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-red hover:border-red-800 transition">Disable All</button>
-        <button @click="massEditOpen = !massEditOpen; if (!massEditOpen) massEditReset()"
-          class="text-xs px-2.5 py-1 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-blue hover:border-gh-blue transition"
-          :class="massEditOpen && 'text-gh-blue border-gh-blue'">Set Retention</button>
-      </div>
+    <!-- Action rows -->
+    <div class="flex items-center gap-3 mb-1.5">
+      <span class="text-xs text-gh-muted w-24 shrink-0">Cleanup <span class="text-gh-dim" x-text="'· ' + Object.values(editConfig.categories || {}).filter(c => c.enabled).length + '/' + Object.keys(editConfig.categories || {}).length"></span></span>
+      <button @click="Object.values(editConfig.categories).forEach(c => c.enabled = true); configDirty = true"
+        class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-green hover:border-green-800 transition" style="min-width:62px">Enable All</button>
+      <button @click="Object.values(editConfig.categories).forEach(c => c.enabled = false); configDirty = true"
+        class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-red hover:border-red-800 transition" style="min-width:66px">Disable All</button>
+      <button @click="massEditOpen = !massEditOpen; if (!massEditOpen) massEditReset()"
+        class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-blue hover:border-gh-blue transition" style="min-width:76px"
+        :class="massEditOpen && 'text-gh-blue border-gh-blue'">Set Retention</button>
     </div>
+    <template x-if="editConfig.sortEnabled">
+      <div class="flex items-center gap-3 mb-2">
+        <span class="text-xs text-gh-muted w-24 shrink-0">Sort <span class="text-gh-dim" x-text="'· ' + Object.entries(editConfig.sortInclude || {}).filter(([,v]) => v).length + '/' + Object.keys(editConfig.categories || {}).length"></span></span>
+        <button @click="Object.keys(editConfig.categories || {}).forEach(n => { if (!editConfig.sortInclude) editConfig.sortInclude = {}; editConfig.sortInclude[n] = true; }); configDirty = true"
+          class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-purple hover:border-purple-800 transition" style="min-width:62px">Enable All</button>
+        <button @click="editConfig.sortInclude = {}; configDirty = true"
+          class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-red hover:border-red-800 transition" style="min-width:66px">Disable All</button>
+        <button @click="openSortModal()"
+          class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-purple hover:border-purple-800 transition" style="min-width:76px">Sort Now</button>
+      </div>
+    </template>
     <!-- Mass edit retention panel -->
     <div x-show="massEditOpen" x-collapse class="bg-gh-card border border-gh-border rounded-lg p-4 mb-2">
+      <p class="text-xs text-gh-dim mb-3">Sets category default retention. Channels with individual overrides keep their own value.</p>
       <div class="flex items-center gap-2 mb-3">
         <label class="flex items-center gap-1.5 cursor-pointer text-xs text-gh-muted">
           <input type="checkbox" :checked="massEditAllSelected" @change="massEditToggleAll()" class="rounded border-gh-border2 bg-gh-bg">
@@ -175,31 +238,48 @@
         <button @click="massEditReset()" class="text-xs text-gh-muted hover:text-gh-text transition">Cancel</button>
       </div>
     </div>
+    <!-- Grid header -->
+    <div class="grid items-center px-4 py-1.5 mt-3 border-b border-gh-border text-[10px] text-gh-dim uppercase tracking-wider"
+      :style="editConfig.sortEnabled ? 'grid-template-columns:1fr 58px 65px 58px 48px 42px 20px' : 'grid-template-columns:1fr 58px 65px 58px 20px'">
+      <span>Category</span>
+      <span class="text-center">Deletes</span>
+      <span class="text-center">Overrides</span>
+      <span class="text-center">Cleanup</span>
+      <span x-show="editConfig.sortEnabled" class="text-center">Sort</span>
+      <span x-show="editConfig.sortEnabled" class="text-center">Pin</span>
+      <span></span>
+    </div>
     <template x-for="[catName, cat] in Object.entries(editConfig.categories || {}).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
-      <div class="bg-gh-card border border-gh-border rounded-lg mb-2 overflow-hidden">
-        <!-- Category header -->
-        <div @click="toggleCategory(catName)" class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gh-bg/50 transition">
-          <div class="flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full" :class="cat.enabled ? 'bg-gh-green' : 'bg-gh-dim'"></span>
-            <span class="text-sm font-medium" x-text="catName"></span>
-            <span class="text-xs text-gh-dim" x-text="(cat._channels || []).length + ' ch'"></span>
+      <div class="bg-gh-card border border-gh-border rounded-lg mb-1.5">
+        <!-- Category header (grid row) -->
+        <div @click="toggleCategory(catName)" class="grid items-center px-4 py-2.5 cursor-pointer hover:bg-gh-bg/50 transition"
+          :style="editConfig.sortEnabled ? 'grid-template-columns:1fr 58px 65px 58px 48px 42px 20px' : 'grid-template-columns:1fr 58px 65px 58px 20px'">
+          <div class="flex items-center gap-2 overflow-hidden">
+            <span class="w-2 h-2 rounded-full shrink-0" :class="cat.enabled ? 'bg-gh-green' : 'bg-gh-dim'"></span>
+            <span class="text-sm font-medium truncate" x-text="catName"></span>
+            <span class="text-xs text-gh-dim shrink-0" x-text="(cat._channels || []).length + ' ch'"></span>
           </div>
-          <div class="flex items-center gap-3 text-xs text-gh-muted">
-            <span>Default: <strong x-text="retentionLabel(cat.default ?? editConfig.globalDefault)"></strong></span>
-            <span x-text="countOverrides(cat) + ' override' + (countOverrides(cat) !== 1 ? 's' : '')"></span>
-            <span :class="cat.enabled ? 'text-gh-green' : 'text-gh-dim'" x-text="cat.enabled ? 'Enabled' : 'Disabled'"></span>
-            <button x-show="cat.enabled" @click.stop="runCategory(catName)" :disabled="status.cleanupRunning || syncRunning"
-              class="px-2 py-0.5 rounded border border-green-900/60 bg-green-900/30 text-gh-green hover:bg-green-900/50 transition disabled:opacity-50 disabled:cursor-not-allowed"
-              x-text="status.dryRun ? 'Dry Run' : 'Cleanup'"></button>
-            <svg class="w-4 h-4 transition-transform" :class="openCategories.includes(catName) && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-          </div>
+          <span class="text-center text-xs"
+            :class="!cat.enabled ? 'text-gh-dim' : (retentionEffect(cat.default ?? editConfig.globalDefault, cat.deleteOld) === '—' ? 'text-gh-yellow' : 'text-gh-muted')"
+            x-text="cat.enabled ? retentionEffect(cat.default ?? editConfig.globalDefault, cat.deleteOld) : '—'"
+            :title="!cat.enabled ? 'Cleanup disabled' : (retentionEffect(cat.default ?? editConfig.globalDefault, cat.deleteOld) === '—' ? 'Retention >14d but Delete Old is off — nothing will be deleted' : '')"></span>
+          <span class="text-center text-xs" :class="countOverrides(cat) > 0 ? 'text-purple-400' : 'text-gh-dim'" x-text="countOverrides(cat) || '—'"></span>
+          <span class="text-center"><span class="text-[10px] px-1.5 py-0.5 rounded" :class="cat.enabled ? 'bg-green-900/30 text-gh-green' : 'bg-gh-border text-gh-dim'" x-text="cat.enabled ? 'on' : 'off'"></span></span>
+          <template x-if="editConfig.sortEnabled">
+            <span class="text-center"><span class="text-[10px] px-1.5 py-0.5 rounded" :class="editConfig.sortInclude?.[catName] ? 'bg-purple-900/30 text-purple-400' : 'bg-gh-border text-gh-dim'" x-text="editConfig.sortInclude?.[catName] ? 'on' : 'off'"></span></span>
+          </template>
+          <template x-if="editConfig.sortEnabled">
+            <span class="text-center text-[10px]" :class="editConfig.sortPinned?.[catName] != null ? 'text-purple-400' : 'text-gh-dim'"
+              x-text="editConfig.sortPinned?.[catName] === 0 ? '1st' : (editConfig.sortPinned?.[catName] === -1 ? 'last' : (editConfig.sortPinned?.[catName] > 0 ? '#'+(editConfig.sortPinned[catName]+1) : '—'))"></span>
+          </template>
+          <svg class="w-3.5 h-3.5 text-gh-dim transition-transform justify-self-center" :class="openCategories.includes(catName) && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
         </div>
         <!-- Category body -->
         <div x-show="openCategories.includes(catName)" x-collapse class="border-t border-gh-border px-4 pb-3">
           <!-- Category controls -->
           <div class="flex items-center gap-4 py-3 border-b border-gh-border">
-            <div class="flex items-center gap-2">
-              <span class="text-xs text-gh-muted">Enabled:</span>
+            <div class="flex items-center gap-2" title="Enable or disable message cleanup for this category">
+              <span class="text-xs text-gh-muted">Cleanup:</span>
               <button @click="cat.enabled = !cat.enabled; configDirty = true"
                 class="w-8 h-4 rounded-full relative transition-colors"
                 :class="cat.enabled ? 'bg-blue-600' : 'bg-gh-border2'">
@@ -207,12 +287,12 @@
                   :class="cat.enabled ? 'left-[18px]' : 'left-0.5'"></span>
               </button>
             </div>
-            <div class="flex items-center gap-2">
-              <span class="text-xs text-gh-muted">Default retention:</span>
+            <div class="flex items-center gap-2" title="Delete messages older than this many days. 0 = delete all, -1 = never delete. Channels can override this individually.">
+              <span class="text-xs text-gh-muted">Max age:</span>
               <input type="number" :value="cat.default ?? ''" @input="setCategoryDefault(catName, $event.target.value)" class="px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs w-14 text-center focus:border-gh-blue outline-none" min="-1" placeholder="global">
               <span class="text-xs text-gh-dim">days</span>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2" title="Also delete messages older than 14 days (slower, one at a time). Without this, only messages under 14 days old are deleted.">
               <span class="text-xs text-gh-muted">Delete old (&gt;14d):</span>
               <button @click="if (cat.deleteOld === false) { delete cat.deleteOld; } else { cat.deleteOld = false; } configDirty = true"
                 class="w-8 h-4 rounded-full relative transition-colors"
@@ -221,26 +301,74 @@
                   :class="cat.deleteOld !== false ? 'left-[18px]' : 'left-0.5'"></span>
               </button>
             </div>
+            <template x-if="editConfig.sortEnabled">
+              <div class="flex items-center gap-2" title="Include this category's channels when sorting the server alphabetically">
+                <span class="text-xs text-gh-muted">Sort channels:</span>
+                <button @click="toggleCatSort(catName)"
+                  class="w-8 h-4 rounded-full relative transition-colors"
+                  :class="editConfig.sortInclude?.[catName] ? 'bg-purple-600' : 'bg-gh-border2'">
+                  <span class="absolute w-3 h-3 bg-white rounded-full top-0.5 transition-all"
+                    :class="editConfig.sortInclude?.[catName] ? 'left-[18px]' : 'left-0.5'"></span>
+                </button>
+              </div>
+            </template>
+            <template x-if="editConfig.sortEnabled">
+              <div class="flex items-center gap-2" title="Lock this category to a fixed position when sorting. 0 = always first, -1 = always last, empty = sort alphabetically">
+                <span class="text-xs text-gh-muted">Pin:</span>
+                <input type="number" min="-1"
+                  :value="editConfig.sortPinned?.[catName] ?? ''"
+                  @input="if (!editConfig.sortPinned) editConfig.sortPinned = {}; const v = $event.target.value; if (v === '') { delete editConfig.sortPinned[catName]; } else { editConfig.sortPinned[catName] = parseInt(v); } configDirty = true"
+                  class="px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs w-12 text-center focus:border-gh-blue outline-none"
+                  placeholder="—">
+                <span class="text-xs text-gh-dim" x-text="editConfig.sortPinned?.[catName] === 0 ? 'first' : (editConfig.sortPinned?.[catName] === -1 ? 'last' : '')"></span>
+              </div>
+            </template>
           </div>
           <!-- Channel list -->
           <template x-for="(ch, idx) in (cat._channels || [])" :key="catName + '-' + idx">
             <div class="flex items-center justify-between py-1.5 text-sm">
-              <span class="text-gh-muted flex items-center gap-1">
+              <span class="flex items-center gap-1" :class="channelEffectiveRetention(ch, cat) === -1 ? 'text-gh-dim' : 'text-gh-muted'">
                 <span class="text-gh-dim">#</span>
                 <span x-text="channelName(ch)"></span>
               </span>
               <div class="flex items-center gap-2">
-                <span class="text-[10px] px-1.5 py-0.5 rounded"
-                  :class="channelRetentionClass(ch, cat)">
-                  <span x-text="channelRetentionLabel(ch, cat)"></span>
-                </span>
-                <input type="number" :value="channelOverride(ch)" @input="setChannelOverride(catName, idx, $event.target.value)"
-                  class="px-1.5 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs w-12 text-center focus:border-gh-blue outline-none"
-                  min="-1" placeholder="—">
-                <button x-show="cat.enabled && channelEffectiveRetention(ch, cat) !== -1" @click.stop="runChannel(catName, channelName(ch))" :disabled="status.cleanupRunning || syncRunning"
-                  class="text-[10px] px-2 py-0.5 rounded border border-green-900/60 bg-green-900/30 text-gh-green hover:bg-green-900/50 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                  x-text="status.dryRun ? 'Dry Run' : 'Cleanup'"></button>
+                <!-- Retention dropdown -->
+                <div class="ret-wrap">
+                  <button class="ret-btn"
+                    :class="channelEffectiveRetention(ch, cat) === -1 ? 'ret-skip' : (typeof ch === 'object' && ch !== null ? 'ret-custom' : 'ret-default')"
+                    @click.stop="openRetentionMenu(catName, idx, $event, ch)">
+                    <span x-text="retentionBtnText(ch, cat)"></span>
+                    <span class="ret-arrow">&#9662;</span>
+                  </button>
+                  <template x-if="retentionMenu === catName + '-' + idx">
+                    <div>
+                      <div class="fixed inset-0 z-40" @click="retentionMenu = null" @keydown.escape.window="retentionMenu = null"></div>
+                      <div class="ret-menu" :style="retentionMenuPos" @click.stop>
+                        <div class="ret-opt" :class="typeof ch === 'string' && 'ret-opt-active'"
+                          @click="setChannelOverride(catName, idx, ''); retentionMenu = null">
+                          <span class="ret-dot" style="background:#58a6ff"></span>
+                          <span>Default <span style="color:#484f58;font-size:10px" x-text="'(' + retentionEffect(cat.default ?? editConfig.globalDefault, cat.deleteOld) + ')'"></span></span>
+                          <span class="ret-check" x-text="typeof ch === 'string' ? '✓' : ''"></span>
+                        </div>
+                        <div class="ret-opt" :class="channelEffectiveRetention(ch, cat) === -1 && 'ret-opt-active'"
+                          @click="setChannelOverride(catName, idx, '-1'); retentionMenu = null">
+                          <span class="ret-dot" style="background:#8b949e"></span>
+                          <span>Skip <span style="color:#484f58;font-size:10px">(never delete)</span></span>
+                          <span class="ret-check" x-text="channelEffectiveRetention(ch, cat) === -1 ? '✓' : ''"></span>
+                        </div>
+                        <div class="ret-custom-row">
+                          <span class="ret-dot" style="background:#bc8cff"></span>
+                          <input type="number" class="ret-custom-input" x-model="retentionCustom" min="0" placeholder="days"
+                            @keydown.enter="applyRetentionCustom(catName, idx)">
+                          <span style="font-size:11px;color:#8b949e">days</span>
+                          <button class="ret-custom-apply" @click="applyRetentionCustom(catName, idx)">Set</button>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
                 <button @click.stop="openPurgeAll(catName, channelName(ch))" :disabled="status.cleanupRunning || syncRunning"
+                  title="Delete and recreate this channel to instantly clear all messages"
                   class="text-[10px] px-2 py-0.5 rounded bg-red-800 text-red-100 hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed">Purge All</button>
               </div>
             </div>
@@ -302,19 +430,15 @@
       <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-3">Run History</h3>
       <template x-for="(run, idx) in (stats.history || []).slice(0, 8)" :key="run.timestamp">
         <div class="border-b border-gh-border last:border-b-0">
-          <div @click="historyExpanded = historyExpanded === idx ? null : idx" class="flex justify-between items-center py-1.5 text-sm cursor-pointer hover:bg-gh-bg/50 transition px-1 rounded">
-            <div class="flex items-center gap-2">
+          <div @click="historyExpanded = historyExpanded === idx ? null : idx" class="grid items-center py-1.5 text-xs cursor-pointer hover:bg-gh-bg/50 transition px-1 rounded" style="grid-template-columns: 12px 1fr 70px 80px 50px 16px; gap: 6px;">
               <span class="w-2 h-2 rounded-full" :class="run.errors > 0 ? 'bg-gh-red' : (run.dryRun ? 'bg-gh-blue' : 'bg-gh-green')"></span>
-              <span class="text-gh-text text-xs" x-text="formatDate(run.timestamp)"></span>
-            </div>
-            <div class="flex items-center gap-2 text-xs">
-              <span class="px-1.5 py-0.5 rounded border"
+              <span class="text-gh-text" x-text="formatDate(run.timestamp)"></span>
+              <span class="px-1.5 py-0.5 rounded border text-center"
                 :class="run.dryRun ? 'text-gh-blue border-blue-800 bg-blue-900/20' : (run.trigger === 'schedule' ? 'text-gh-purple border-purple-800 bg-purple-900/20' : 'text-gh-green border-green-800 bg-green-900/20')"
                 x-text="run.dryRun ? 'dry-run' : (run.trigger === 'schedule' ? 'scheduled' : 'live')"></span>
-              <span class="font-semibold" :class="run.purged > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="run.purged + ' purged'"></span>
-              <span class="text-gh-dim" x-text="formatDuration(run.duration)"></span>
-              <svg class="w-3 h-3 text-gh-dim transition-transform" :class="historyExpanded === idx && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-            </div>
+              <span class="font-semibold text-right" :class="run.purged > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="run.purged + ' purged'"></span>
+              <span class="text-gh-dim text-right" x-text="formatDuration(run.duration)"></span>
+              <svg class="w-3 h-3 text-gh-dim transition-transform justify-self-end" :class="historyExpanded === idx && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
           </div>
           <!-- Expanded category breakdown -->
           <div x-show="historyExpanded === idx" x-collapse class="px-1 pb-2">
@@ -337,16 +461,24 @@
 </div>
 
 <!-- ===== CONFIGURATION TAB ===== -->
-<div x-show="tab === 'config'" x-cloak class="p-6 space-y-4">
+<div x-show="tab === 'config'" x-cloak class="p-6 content-wrap">
 
-  <!-- Cleanup Section -->
-  <div class="bg-gh-card border border-gh-border rounded-lg overflow-hidden">
-    <button @click="configSections.cleanup = !configSections.cleanup" class="w-full flex items-center justify-between px-5 py-3 hover:bg-gh-bg/50 transition cursor-pointer">
-      <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider">Cleanup</h3>
-      <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="configSections.cleanup && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-    </button>
-    <div x-show="configSections.cleanup" x-collapse>
-      <div class="px-5 pb-4 space-y-0 divide-y divide-gh-border border-t border-gh-border">
+  <div class="settings-layout">
+    <!-- Sidebar -->
+    <div class="settings-sidebar">
+      <div class="settings-nav" :class="configSection==='cleanup' && 'settings-nav-active'" @click="configSection='cleanup'">Cleanup</div>
+      <div class="settings-nav" :class="configSection==='notifications' && 'settings-nav-active'" @click="configSection='notifications'">Notifications</div>
+      <div class="settings-nav" :class="configSection==='schedule' && 'settings-nav-active'" @click="configSection='schedule'">Schedule</div>
+      <div class="settings-nav" :class="configSection==='tools' && 'settings-nav-active'" @click="configSection='tools'">Discord Tools</div>
+      <div class="settings-nav" :class="configSection==='general' && 'settings-nav-active'" @click="configSection='general'">General</div>
+    </div>
+    <div class="settings-content">
+
+    <!-- ===== CLEANUP SECTION ===== -->
+    <div x-show="configSection==='cleanup'">
+      <h2 class="text-lg font-semibold text-gh-text mb-1">Cleanup</h2>
+      <p class="text-sm text-gh-muted mb-4">Message deletion behavior and rate limiting.</p>
+      <div class="space-y-0 divide-y divide-gh-border">
         <div class="flex items-start gap-4 py-3">
           <div class="w-64 shrink-0">
             <div class="text-sm">Dry Run (Global)</div>
@@ -399,155 +531,281 @@
           </div>
         </div>
       </div>
-    </div>
-  </div>
+    </div><!-- end cleanup section -->
 
-  <!-- Discord Notifications Section -->
-  <div class="bg-gh-card border border-gh-border rounded-lg overflow-hidden">
-    <button @click="configSections.discord = !configSections.discord" class="w-full flex items-center justify-between px-5 py-3 hover:bg-gh-bg/50 transition cursor-pointer">
-      <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider">Discord Notifications</h3>
-      <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="configSections.discord && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-    </button>
-    <div x-show="configSections.discord" x-collapse>
-      <div class="px-5 pb-4 space-y-0 divide-y divide-gh-border border-t border-gh-border">
-        <div class="py-3">
-          <div class="flex items-center gap-4 mb-2">
-            <div class="w-64 shrink-0"><div class="text-sm">Cleanup Webhook</div><div class="text-xs text-gh-dim">Cleanup summary embeds after each run</div></div>
-            <button @click="testWebhook('cleanup')" :disabled="!editConfig.webhooks?.cleanup || webhookTesting === 'cleanup'"
-              class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
-              :class="webhookTesting === 'cleanup' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
-              x-text="webhookTesting === 'cleanup' ? 'Sending...' : 'Test'"></button>
-          </div>
-          <input x-model="editConfig.webhooks.cleanup" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
-          <div class="flex items-center gap-2 mt-2">
-            <span class="text-xs text-gh-dim">Embed color</span>
-            <span class="w-5 h-5 rounded border border-gh-border2 shrink-0" :style="'background:' + (editConfig.webhooks?.cleanupColor || '#238636')"></span>
-            <input x-model="editConfig.webhooks.cleanupColor" @input="configDirty = true" class="px-2 py-1 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-xs w-24 font-mono focus:border-gh-blue outline-none" placeholder="#238636">
-          </div>
-        </div>
-        <div class="py-3">
-          <div class="flex items-center gap-4 mb-2">
-            <div class="w-64 shrink-0"><div class="text-sm">Info Webhook</div><div class="text-xs text-gh-dim">Auto-discovery notifications (new channels found)</div></div>
-            <button @click="testWebhook('info')" :disabled="!editConfig.webhooks?.info || webhookTesting === 'info'"
-              class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
-              :class="webhookTesting === 'info' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
-              x-text="webhookTesting === 'info' ? 'Sending...' : 'Test'"></button>
-          </div>
-          <input x-model="editConfig.webhooks.info" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
-          <div class="flex items-center gap-2 mt-2">
-            <span class="text-xs text-gh-dim">Embed color</span>
-            <span class="w-5 h-5 rounded border border-gh-border2 shrink-0" :style="'background:' + (editConfig.webhooks?.infoColor || '#f39c12')"></span>
-            <input x-model="editConfig.webhooks.infoColor" @input="configDirty = true" class="px-2 py-1 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-xs w-24 font-mono focus:border-gh-blue outline-none" placeholder="#f39c12">
-          </div>
-        </div>
-        <div class="flex items-center gap-4 py-3">
-          <div class="w-64 shrink-0"><div class="text-sm">Discover Webhooks</div><div class="text-xs text-gh-dim">Show Webhooks tab — lists all server webhooks</div></div>
-          <button @click="editConfig.webhooks.discovery = !editConfig.webhooks.discovery; configDirty = true"
-            class="w-10 h-5 rounded-full relative transition-colors shrink-0"
-            :class="editConfig.webhooks?.discovery ? 'bg-blue-600' : 'bg-gh-border2'">
-            <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
-              :class="editConfig.webhooks?.discovery ? 'left-5' : 'left-0.5'"></span>
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
+    <!-- ===== NOTIFICATIONS SECTION ===== -->
+    <div x-show="configSection==='notifications'">
+      <h2 class="text-lg font-semibold text-gh-text mb-1">Notifications</h2>
+      <p class="text-sm text-gh-muted mb-4">Configure where PurgeBot sends cleanup reports and alerts.</p>
 
-  <!-- Gotify Notifications Section -->
-  <div class="bg-gh-card border border-gh-border rounded-lg overflow-hidden">
-    <button @click="configSections.gotify = !configSections.gotify" class="w-full flex items-center justify-between px-5 py-3 hover:bg-gh-bg/50 transition cursor-pointer">
-      <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider">Gotify Notifications</h3>
-      <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="configSections.gotify && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-    </button>
-    <div x-show="configSections.gotify" x-collapse>
-      <div class="px-5 pb-4 space-y-0 divide-y divide-gh-border border-t border-gh-border">
-        <div class="flex items-center gap-4 py-3">
-          <div class="w-64 shrink-0"><div class="text-sm">Enable Gotify</div><div class="text-xs text-gh-dim">Push notifications via Gotify</div></div>
-          <button @click="editConfig.gotify.enabled = !editConfig.gotify.enabled; configDirty = true"
-            class="w-10 h-5 rounded-full relative transition-colors shrink-0"
-            :class="editConfig.gotify?.enabled ? 'bg-blue-600' : 'bg-gh-border2'">
-            <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
-              :class="editConfig.gotify?.enabled ? 'left-5' : 'left-0.5'"></span>
-          </button>
-        </div>
-        <div class="py-3" x-show="editConfig.gotify?.enabled">
-          <div class="flex items-center gap-4 mb-2">
-            <div class="w-64 shrink-0"><div class="text-sm">Gotify URL</div><div class="text-xs text-gh-dim">Server URL (e.g. http://gotify:80)</div></div>
-            <button @click="testGotify()" :disabled="!editConfig.gotify?.url || !editConfig.gotify?.token || gotifyTesting"
-              class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
-              :class="gotifyTesting ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
-              x-text="gotifyTesting ? 'Sending...' : 'Test'"></button>
+      <!-- Discord Webhooks (collapsible) -->
+      <div class="bg-gh-bg border border-gh-border rounded-lg mb-3 overflow-hidden">
+        <button @click="settingsExpand.discord = !settingsExpand.discord" class="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition cursor-pointer">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-gh-text">Discord</h3>
+            <span class="text-xs" :class="(editConfig.webhooks?.cleanup || editConfig.webhooks?.info) ? 'text-gh-green' : 'text-gh-dim'"
+              x-text="(editConfig.webhooks?.cleanup || editConfig.webhooks?.info) ? 'Enabled' : 'Disabled'"></span>
           </div>
-          <input x-model="editConfig.gotify.url" @input="configDirty = true" placeholder="https://gotify.example.com" autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
-        </div>
-        <div class="py-3" x-show="editConfig.gotify?.enabled">
-          <div class="w-64 shrink-0 mb-2"><div class="text-sm">App Token</div><div class="text-xs text-gh-dim">Gotify application token</div></div>
-          <input x-model="editConfig.gotify.token" @input="configDirty = true" type="password" autocomplete="one-time-code" placeholder="Gotify app token" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
-        </div>
-        <div class="py-3" x-show="editConfig.gotify?.enabled">
-          <div class="text-sm mb-2">Priority Levels</div>
-          <div class="text-xs text-gh-dim mb-3">Toggle which severity levels send Gotify notifications. Values 0-3 are silent, 4+ trigger push.</div>
-          <div class="space-y-2">
-            <div class="flex items-center gap-3">
-              <button @click="editConfig.gotify.priorityWarning = !editConfig.gotify.priorityWarning; configDirty = true"
-                class="w-10 h-5 rounded-full relative transition-colors shrink-0"
-                :class="editConfig.gotify?.priorityWarning ? 'bg-blue-600' : 'bg-gh-border2'">
-                <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
-                  :class="editConfig.gotify?.priorityWarning ? 'left-5' : 'left-0.5'"></span>
-              </button>
-              <span class="text-sm w-20">Warning</span>
-              <input x-model.number="editConfig.gotify.warningValue" @input="configDirty = true" type="number" min="0" max="10"
-                class="w-16 px-2 py-1 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-xs text-center font-mono focus:border-gh-blue outline-none"
-                :disabled="!editConfig.gotify?.priorityWarning">
+          <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="settingsExpand.discord && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div x-show="settingsExpand.discord" x-collapse class="px-4 pb-4 border-t border-gh-border">
+          <div class="space-y-0 divide-y divide-gh-border">
+            <div class="py-3">
+              <div class="flex items-center gap-4 mb-2">
+                <div class="w-48 shrink-0"><div class="text-sm">Cleanup Webhook</div><div class="text-xs text-gh-dim">Summary embeds after each run</div></div>
+                <button @click="testWebhook('cleanup')" :disabled="!editConfig.webhooks?.cleanup || webhookTesting === 'cleanup'"
+                  class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  :class="webhookTesting === 'cleanup' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
+                  x-text="webhookTesting === 'cleanup' ? 'Sending...' : 'Test'"></button>
+              </div>
+              <input x-model="editConfig.webhooks.cleanup" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
+              <div class="flex items-center gap-2 mt-2">
+                <span class="text-xs text-gh-dim">Embed color</span>
+                <span class="w-5 h-5 rounded border border-gh-border2 shrink-0" :style="'background:' + (editConfig.webhooks?.cleanupColor || '#238636')"></span>
+                <input x-model="editConfig.webhooks.cleanupColor" @input="configDirty = true" class="px-2 py-1 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-xs w-24 font-mono focus:border-gh-blue outline-none" placeholder="#238636">
+              </div>
             </div>
-            <div class="flex items-center gap-3">
-              <button @click="editConfig.gotify.priorityInfo = !editConfig.gotify.priorityInfo; configDirty = true"
-                class="w-10 h-5 rounded-full relative transition-colors shrink-0"
-                :class="editConfig.gotify?.priorityInfo ? 'bg-blue-600' : 'bg-gh-border2'">
-                <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
-                  :class="editConfig.gotify?.priorityInfo ? 'left-5' : 'left-0.5'"></span>
-              </button>
-              <span class="text-sm w-20">Info</span>
-              <input x-model.number="editConfig.gotify.infoValue" @input="configDirty = true" type="number" min="0" max="10"
-                class="w-16 px-2 py-1 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-xs text-center font-mono focus:border-gh-blue outline-none"
-                :disabled="!editConfig.gotify?.priorityInfo">
+            <div class="py-3">
+              <div class="flex items-center gap-4 mb-2">
+                <div class="w-48 shrink-0"><div class="text-sm">Info Webhook</div><div class="text-xs text-gh-dim">Discovery notifications (new channels)</div></div>
+                <button @click="testWebhook('info')" :disabled="!editConfig.webhooks?.info || webhookTesting === 'info'"
+                  class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  :class="webhookTesting === 'info' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
+                  x-text="webhookTesting === 'info' ? 'Sending...' : 'Test'"></button>
+              </div>
+              <input x-model="editConfig.webhooks.info" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
+              <div class="flex items-center gap-2 mt-2">
+                <span class="text-xs text-gh-dim">Embed color</span>
+                <span class="w-5 h-5 rounded border border-gh-border2 shrink-0" :style="'background:' + (editConfig.webhooks?.infoColor || '#f39c12')"></span>
+                <input x-model="editConfig.webhooks.infoColor" @input="configDirty = true" class="px-2 py-1 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-xs w-24 font-mono focus:border-gh-blue outline-none" placeholder="#f39c12">
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- Display & Maintenance Section -->
-  <div class="bg-gh-card border border-gh-border rounded-lg overflow-hidden">
-    <button @click="configSections.display = !configSections.display" class="w-full flex items-center justify-between px-5 py-3 hover:bg-gh-bg/50 transition cursor-pointer">
-      <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider">Display & Maintenance</h3>
-      <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="configSections.display && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-    </button>
-    <div x-show="configSections.display" x-collapse>
-      <div class="px-5 pb-4 space-y-0 divide-y divide-gh-border border-t border-gh-border">
+      <!-- Gotify (collapsible) -->
+      <div class="bg-gh-bg border border-gh-border rounded-lg overflow-hidden">
+        <button @click="settingsExpand.gotify = !settingsExpand.gotify" class="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition cursor-pointer">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-gh-text">Gotify</h3>
+            <span class="text-xs" :class="editConfig.gotify?.enabled ? 'text-gh-green' : 'text-gh-dim'"
+              x-text="editConfig.gotify?.enabled ? 'Enabled' : 'Disabled'"></span>
+          </div>
+          <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="settingsExpand.gotify && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div x-show="settingsExpand.gotify" x-collapse class="px-4 pb-4 border-t border-gh-border">
+          <div class="space-y-0 divide-y divide-gh-border">
+            <div class="flex items-center gap-4 py-3">
+              <div class="w-48 shrink-0"><div class="text-sm">Enable Gotify</div></div>
+              <button @click="editConfig.gotify.enabled = !editConfig.gotify.enabled; configDirty = true"
+                class="w-10 h-5 rounded-full relative transition-colors shrink-0"
+                :class="editConfig.gotify?.enabled ? 'bg-blue-600' : 'bg-gh-border2'">
+                <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+                  :class="editConfig.gotify?.enabled ? 'left-5' : 'left-0.5'"></span>
+              </button>
+            </div>
+            <template x-if="editConfig.gotify?.enabled">
+              <div class="divide-y divide-gh-border">
+                <div class="py-3">
+                  <div class="flex items-center gap-4 mb-2">
+                    <div class="w-48 shrink-0"><div class="text-sm">Server URL</div></div>
+                    <button @click="testGotify()" :disabled="!editConfig.gotify?.url || !editConfig.gotify?.token || gotifyTesting"
+                      class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+                      :class="gotifyTesting ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
+                      x-text="gotifyTesting ? 'Sending...' : 'Test'"></button>
+                  </div>
+                  <input x-model="editConfig.gotify.url" @input="configDirty = true" placeholder="http://gotify:80" autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
+                </div>
+                <div class="py-3">
+                  <div class="w-48 shrink-0 mb-2"><div class="text-sm">App Token</div></div>
+                  <input x-model="editConfig.gotify.token" @input="configDirty = true" type="password" autocomplete="one-time-code" placeholder="Gotify app token" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
+                </div>
+                <div class="py-3">
+                  <div class="text-sm mb-2">Priority Levels</div>
+                  <div class="text-xs text-gh-dim mb-3">Values 0-3 are silent, 4+ trigger push notification.</div>
+                  <div class="space-y-2">
+                    <div class="flex items-center gap-3">
+                      <button @click="editConfig.gotify.priorityWarning = !editConfig.gotify.priorityWarning; configDirty = true"
+                        class="w-10 h-5 rounded-full relative transition-colors shrink-0"
+                        :class="editConfig.gotify?.priorityWarning ? 'bg-blue-600' : 'bg-gh-border2'">
+                        <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+                          :class="editConfig.gotify?.priorityWarning ? 'left-5' : 'left-0.5'"></span>
+                      </button>
+                      <span class="text-sm w-20">Warning</span>
+                      <input x-model.number="editConfig.gotify.warningValue" @input="configDirty = true" type="number" min="0" max="10"
+                        class="w-16 px-2 py-1 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-xs text-center font-mono focus:border-gh-blue outline-none"
+                        :disabled="!editConfig.gotify?.priorityWarning">
+                    </div>
+                    <div class="flex items-center gap-3">
+                      <button @click="editConfig.gotify.priorityInfo = !editConfig.gotify.priorityInfo; configDirty = true"
+                        class="w-10 h-5 rounded-full relative transition-colors shrink-0"
+                        :class="editConfig.gotify?.priorityInfo ? 'bg-blue-600' : 'bg-gh-border2'">
+                        <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+                          :class="editConfig.gotify?.priorityInfo ? 'left-5' : 'left-0.5'"></span>
+                      </button>
+                      <span class="text-sm w-20">Info</span>
+                      <input x-model.number="editConfig.gotify.infoValue" @input="configDirty = true" type="number" min="0" max="10"
+                        class="w-16 px-2 py-1 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-xs text-center font-mono focus:border-gh-blue outline-none"
+                        :disabled="!editConfig.gotify?.priorityInfo">
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div><!-- end notifications section -->
+
+    <!-- ===== DISCORD TOOLS SECTION ===== -->
+    <div x-show="configSection==='tools'">
+      <h2 class="text-lg font-semibold text-gh-text mb-1">Discord Tools</h2>
+      <p class="text-sm text-gh-muted mb-4">Server management features beyond message cleanup.</p>
+
+      <!-- Webhook Discovery (collapsible) -->
+      <div class="bg-gh-bg border border-gh-border rounded-lg mb-3 overflow-hidden">
+        <button @click="settingsExpand.webhookDiscovery = !settingsExpand.webhookDiscovery" class="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition cursor-pointer">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-gh-text">Webhook Discovery</h3>
+            <span class="text-xs" :class="editConfig.webhooks?.discovery ? 'text-gh-green' : 'text-gh-dim'"
+              x-text="editConfig.webhooks?.discovery ? 'Enabled' : 'Disabled'"></span>
+          </div>
+          <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="settingsExpand.webhookDiscovery && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div x-show="settingsExpand.webhookDiscovery" x-collapse class="px-4 pb-4 border-t border-gh-border">
+          <div class="flex items-center gap-4 py-3">
+            <div class="w-48 shrink-0"><div class="text-sm">Webhooks tab</div><div class="text-xs text-gh-dim">Browse all server webhooks in a dedicated tab</div></div>
+            <button @click="editConfig.webhooks.discovery = !editConfig.webhooks.discovery; configDirty = true"
+              class="w-10 h-5 rounded-full relative transition-colors shrink-0"
+              :class="editConfig.webhooks?.discovery ? 'bg-blue-600' : 'bg-gh-border2'">
+              <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+                :class="editConfig.webhooks?.discovery ? 'left-5' : 'left-0.5'"></span>
+            </button>
+          </div>
+          <div class="flex items-center gap-4 py-3 border-t border-gh-border">
+            <div class="w-48 shrink-0"><div class="text-sm">Scan on schedule</div><div class="text-xs text-gh-dim">Scan for webhooks after each scheduled cleanup. Results logged.</div></div>
+            <button @click="editConfig.webhookDiscoveryOnSchedule = !editConfig.webhookDiscoveryOnSchedule; configDirty = true"
+              class="w-10 h-5 rounded-full relative transition-colors shrink-0"
+              :class="editConfig.webhookDiscoveryOnSchedule ? 'bg-blue-600' : 'bg-gh-border2'">
+              <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+                :class="editConfig.webhookDiscoveryOnSchedule ? 'left-5' : 'left-0.5'"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Channel & Category Sorting (collapsible) -->
+      <div class="bg-gh-bg border border-gh-border rounded-lg overflow-hidden">
+        <button @click="settingsExpand.sorting = !settingsExpand.sorting" class="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition cursor-pointer">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-gh-text">Channel &amp; Category Sorting</h3>
+            <span class="text-xs" :class="editConfig.sortEnabled ? 'text-gh-green' : 'text-gh-dim'"
+              x-text="editConfig.sortEnabled ? 'Enabled' : 'Disabled'"></span>
+          </div>
+          <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="settingsExpand.sorting && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div x-show="settingsExpand.sorting" x-collapse class="px-4 pb-4 border-t border-gh-border">
+          <div class="space-y-0 divide-y divide-gh-border">
+            <div class="flex items-center gap-4 py-3">
+              <div class="w-48 shrink-0"><div class="text-sm">Enable</div><div class="text-xs text-gh-dim">Categories are always sorted alphabetically. To sort channels within a category, enable "Include in sort" on that category in Overview.</div></div>
+              <button @click="editConfig.sortEnabled = !editConfig.sortEnabled; configDirty = true"
+                class="w-10 h-5 rounded-full relative transition-colors shrink-0"
+                :class="editConfig.sortEnabled ? 'bg-blue-600' : 'bg-gh-border2'">
+                <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+                  :class="editConfig.sortEnabled ? 'left-5' : 'left-0.5'"></span>
+              </button>
+            </div>
+            <div x-show="editConfig.sortEnabled" class="flex items-center gap-4 py-3">
+              <div class="w-48 shrink-0"><div class="text-sm">Include voice categories</div><div class="text-xs text-gh-dim">Sort voice-only categories alongside text categories</div></div>
+              <button @click="editConfig.sortIncludeVoice = !editConfig.sortIncludeVoice; configDirty = true"
+                class="w-10 h-5 rounded-full relative transition-colors shrink-0"
+                :class="editConfig.sortIncludeVoice ? 'bg-blue-600' : 'bg-gh-border2'">
+                <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+                  :class="editConfig.sortIncludeVoice ? 'left-5' : 'left-0.5'"></span>
+              </button>
+            </div>
+            <div x-show="editConfig.sortEnabled" class="flex items-center gap-4 py-3">
+              <div class="w-48 shrink-0"><div class="text-sm">Sort on schedule</div><div class="text-xs text-gh-dim">Automatically sort after each scheduled run. Manual cleanup from the Cleanup tab does not trigger sorting.</div></div>
+              <button @click="editConfig.sortAfterCleanup = !editConfig.sortAfterCleanup; configDirty = true"
+                class="w-10 h-5 rounded-full relative transition-colors shrink-0"
+                :class="editConfig.sortAfterCleanup ? 'bg-blue-600' : 'bg-gh-border2'">
+                <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+                  :class="editConfig.sortAfterCleanup ? 'left-5' : 'left-0.5'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- end tools section -->
+
+    <!-- ===== GENERAL SECTION ===== -->
+    <div x-show="configSection==='general'">
+      <h2 class="text-lg font-semibold text-gh-text mb-1">General</h2>
+      <p class="text-sm text-gh-muted mb-4">UI preferences and log retention.</p>
+      <div class="space-y-0 divide-y divide-gh-border">
         <div class="flex items-center gap-4 py-3">
-          <div class="w-64 shrink-0"><div class="text-sm">Time Format</div><div class="text-xs text-gh-dim">How timestamps are displayed in the UI</div></div>
+          <div class="w-48 shrink-0"><div class="text-sm">Time Format</div><div class="text-xs text-gh-dim">How timestamps are displayed</div></div>
           <select x-model="editConfig.display.timeFormat" @change="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm focus:border-gh-blue outline-none">
             <option value="24h">24-hour (14:30)</option>
             <option value="12h">12-hour (2:30 PM)</option>
           </select>
         </div>
         <div class="flex items-center gap-4 py-3">
-          <div class="w-64 shrink-0"><div class="text-sm">Log Retention</div><div class="text-xs text-gh-dim">Days to keep log files</div></div>
+          <div class="w-48 shrink-0"><div class="text-sm">Log Retention</div><div class="text-xs text-gh-dim">Days to keep log files</div></div>
           <div class="flex items-center gap-2">
             <input type="number" x-model.number="editConfig.logging.maxDays" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="1">
             <span class="text-xs text-gh-dim">days</span>
           </div>
         </div>
       </div>
-    </div>
-  </div>
+    </div><!-- end general section -->
 
-</div>
+    <!-- ===== SCHEDULE SECTION ===== -->
+    <div x-show="configSection==='schedule'">
+      <h2 class="text-lg font-semibold text-gh-text mb-1">Schedule</h2>
+      <p class="text-sm text-gh-muted mb-4">Automatically purge messages on a cron schedule.</p>
+
+      <div class="flex items-center gap-3 mb-4">
+        <span class="text-sm text-gh-text">Enabled</span>
+        <button @click="editConfig.scheduleEnabled = !editConfig.scheduleEnabled; configDirty = true"
+          class="w-10 h-5 rounded-full relative transition-colors"
+          :class="editConfig.scheduleEnabled ? 'bg-blue-600' : 'bg-gh-border2'">
+          <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+            :class="editConfig.scheduleEnabled ? 'left-5' : 'left-0.5'"></span>
+        </button>
+      </div>
+
+      <div x-show="!editConfig.scheduleEnabled" class="mb-4">
+        <div class="text-xs text-gh-yellow bg-yellow-900/20 border border-yellow-800/50 rounded px-3 py-2">
+          Schedule is paused — cleanup only runs manually from the Cleanup tab.
+        </div>
+      </div>
+      <div x-show="editConfig.scheduleEnabled && editConfig.dryRun" class="mb-4">
+        <div class="text-xs text-gh-yellow bg-yellow-900/20 border border-yellow-800/50 rounded px-3 py-2">
+          Dry Run is enabled — scheduled runs will only simulate.
+        </div>
+      </div>
+
+      <div x-show="editConfig.scheduleEnabled" class="flex items-center gap-4 flex-wrap">
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-gh-muted">Cron:</span>
+          <input x-model="scheduleEdit.schedule" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-blue text-sm font-mono w-40 focus:border-gh-blue outline-none">
+        </div>
+        <span class="text-gh-dim">&rarr;</span>
+        <span class="text-sm text-gh-muted" x-text="scheduleHumanPreview"></span>
+        <span class="text-xs text-gh-dim ml-2" x-text="'(' + status.timezone + ')'"></span>
+        <button x-show="scheduleEdit.schedule !== status.schedule"
+          @click="saveSchedule()"
+          class="px-3 py-1.5 rounded-md bg-green-600 text-white text-xs hover:bg-green-500 transition ml-2">Save</button>
+      </div>
+    </div><!-- end schedule section -->
+
+    </div><!-- end settings-content -->
+  </div><!-- end settings-layout -->
 
   <!-- Recovery Section — only visible when recovery files exist -->
-  <div x-show="recoveryFiles.length > 0" class="bg-gh-card border border-red-900/60 rounded-lg overflow-hidden">
+  <div x-show="recoveryFiles.length > 0" class="mt-4 bg-gh-card border border-red-900/60 rounded-lg overflow-hidden">
     <div class="px-5 py-3">
       <h3 class="text-xs font-semibold text-gh-red uppercase tracking-wider">Recovery</h3>
       <p class="text-xs text-gh-dim mt-1">Channels that failed to recreate during Purge All. Select one to restore it with its original settings and webhooks.</p>
@@ -569,66 +827,10 @@
     </div>
   </div>
 
-<!-- ===== SCHEDULE TAB ===== -->
-<div x-show="tab === 'schedule'" x-cloak class="p-6">
-  <div class="bg-gh-card border border-gh-border rounded-lg p-5 mb-4">
-    <div class="flex items-center justify-between mb-4">
-      <div>
-        <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider">Schedule</h3>
-        <p class="text-xs text-gh-dim mt-1">Automatically purge messages older than each channel's retention period on a cron schedule.</p>
-      </div>
-      <div class="flex items-center gap-2">
-        <span class="text-xs text-gh-muted">Enabled:</span>
-        <button @click="editConfig.scheduleEnabled = !editConfig.scheduleEnabled; configDirty = true"
-          class="w-10 h-5 rounded-full relative transition-colors"
-          :class="editConfig.scheduleEnabled ? 'bg-blue-600' : 'bg-gh-border2'">
-          <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
-            :class="editConfig.scheduleEnabled ? 'left-5' : 'left-0.5'"></span>
-        </button>
-      </div>
-    </div>
-    <div x-show="!editConfig.scheduleEnabled" class="mb-4">
-      <div class="text-xs text-gh-yellow bg-yellow-900/20 border border-yellow-800/50 rounded px-3 py-2">
-        Schedule is paused — cleanup only runs manually from the Cleanup tab.
-      </div>
-    </div>
-    <div x-show="editConfig.scheduleEnabled && editConfig.dryRun" class="mb-4">
-      <div class="text-xs text-gh-yellow bg-yellow-900/20 border border-yellow-800/50 rounded px-3 py-2">
-        Dry Run is enabled — scheduled runs will only simulate, no messages will be deleted.
-      </div>
-    </div>
-    <div class="flex items-center gap-4 flex-wrap">
-      <div class="flex items-center gap-2">
-        <span class="text-xs text-gh-muted">Cron:</span>
-        <input x-model="scheduleEdit.schedule" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-blue text-sm font-mono w-40 focus:border-gh-blue outline-none">
-      </div>
-      <span class="text-gh-dim">&rarr;</span>
-      <span class="text-sm text-gh-muted" x-text="scheduleHumanPreview"></span>
-      <span class="text-xs text-gh-dim ml-2" x-text="'(' + status.timezone + ')'"></span>
-      <button x-show="scheduleEdit.schedule !== status.schedule"
-        @click="saveSchedule()"
-        class="px-3 py-1.5 rounded-md bg-green-600 text-white text-xs hover:bg-green-500 transition ml-2">Save</button>
-    </div>
-  </div>
-
-  <div class="bg-gh-card border border-gh-border rounded-lg p-5">
-    <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-3">Enabled Categories</h3>
-    <div class="space-y-1">
-      <template x-for="[catName, cat] in Object.entries(editConfig.categories || {}).filter(([,c]) => c.enabled).sort((a,b) => a[0].localeCompare(b[0]))" :key="catName">
-        <div class="grid grid-cols-[160px_1fr] gap-3 items-center py-1.5 border-b border-gh-border last:border-b-0">
-          <span class="text-sm font-medium text-gh-text truncate" x-text="catName" :title="catName"></span>
-          <div class="h-6 rounded bg-blue-900/30 border border-blue-800/50 flex items-center px-3 text-xs text-gh-blue">
-            <span x-text="(cat._channels || []).length + ' channels · default: ' + retentionLabel(cat.default ?? editConfig.globalDefault)"></span>
-          </div>
-        </div>
-      </template>
-    </div>
-    <div class="mt-3 text-xs text-gh-dim" x-text="'Total: ' + status.totalChannels + ' channels across ' + status.enabledCategories + ' categories · Delay: ' + (editConfig.discord?.delayBetweenChannels ?? 500) + 'ms between channels'"></div>
-  </div>
-</div>
+</div><!-- end config tab -->
 
 <!-- ===== LOGS TAB ===== -->
-<div x-show="tab === 'logs'" x-cloak class="p-6">
+<div x-show="tab === 'logs'" x-cloak class="p-6 content-wrap">
   <!-- Toolbar -->
   <div class="flex items-center gap-2 mb-3 flex-wrap">
     <template x-for="lvl in ['All', 'INFO', 'WARN', 'ERROR']" :key="lvl">
@@ -670,7 +872,7 @@
 </div>
 
 <!-- ===== STATISTICS TAB ===== -->
-<div x-show="tab === 'statistics'" x-cloak class="p-6">
+<div x-show="tab === 'statistics'" x-cloak class="p-6 content-wrap">
 
   <!-- Empty state -->
   <div x-show="!stats.history || stats.history.length === 0" class="text-center py-16">
@@ -751,7 +953,7 @@
   </div>
 
 <!-- ===== CLEANUP TAB ===== -->
-<div x-show="tab === 'cleanup'" x-cloak class="p-6">
+<div x-show="tab === 'cleanup'" x-cloak class="p-6 content-wrap">
   <!-- Controls -->
   <div class="flex items-center gap-3 mb-4 flex-wrap">
     <select x-model="cleanupCategory" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm outline-none">
@@ -826,7 +1028,7 @@
               x-text="catData.purged > 0 ? catData.purged + (cleanupResults.dryRun ? ' to delete' : ' deleted') : 'nothing to delete'"></span>
             <span class="text-xs font-normal" :class="cleanupResults.dryRun ? 'text-gh-yellow' : 'text-gh-green'" x-text="cleanupResults.dryRun ? 'dry-run' : 'live'"></span>
           </div>
-          <template x-for="ch in catData.channels" :key="ch.name">
+          <template x-for="(ch, chi) in (catData.channels || []).slice().sort((a,b) => a.name.localeCompare(b.name))" :key="ch.name + '-' + chi">
             <div class="flex items-center justify-between py-1 text-xs border-b border-gh-border last:border-b-0">
               <span class="text-gh-muted"><span class="text-gh-dim">#</span><span x-text="ch.name"></span></span>
               <span class="font-semibold"
@@ -843,7 +1045,7 @@
 </div>
 
 <!-- ===== SYNC TAB ===== -->
-<div x-show="tab === 'sync'" x-cloak class="p-6">
+<div x-show="tab === 'sync'" x-cloak class="p-6 content-wrap">
   <div class="bg-gh-card border border-gh-border rounded-lg p-5">
     <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-2">Channel Discovery</h3>
     <p class="text-sm text-gh-muted mb-2">Discover new Discord categories and channels. Existing config and overrides are preserved. New categories inherit the global default retention but are added disabled — enable them manually to include them in cleanup. New channels in already-enabled categories follow the category's default retention.</p>
@@ -894,33 +1096,33 @@
 </div>
 
 <!-- ===== WEBHOOKS TAB ===== -->
-<div x-show="tab === 'webhooks'" x-cloak class="p-6">
+<div x-show="tab === 'webhooks'" x-cloak class="p-6 content-wrap">
   <!-- Header card -->
   <div class="bg-gh-card border border-gh-border rounded-lg p-5 flex items-center justify-between">
     <div>
       <h2 class="text-lg font-semibold">Discord Webhooks</h2>
-      <p class="text-xs text-gh-dim mt-1">All webhooks on this server, grouped by category and channel</p>
+      <p class="text-xs text-gh-muted mt-1">All webhooks on this server, grouped by category and channel</p>
     </div>
     <div class="flex items-center gap-3">
       <!-- Show URLs toggle -->
       <template x-if="webhooksData && webhooksData.total > 0">
         <button @click="webhooksShowUrls = !webhooksShowUrls"
           class="px-3 py-2 rounded-md border text-xs transition"
-          :class="webhooksShowUrls ? 'border-gh-blue text-gh-blue' : 'border-gh-border2 text-gh-dim hover:text-gh-muted hover:border-gh-blue'">
+          :class="webhooksShowUrls ? 'border-gh-blue text-gh-blue' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'">
           <span x-text="webhooksShowUrls ? 'Hide URLs' : 'Show URLs'"></span>
         </button>
       </template>
       <!-- Export YAML -->
       <template x-if="webhooksData && webhooksData.total > 0">
         <button @click="exportWebhooksYaml()"
-          class="px-3 py-2 rounded-md border border-gh-border2 text-xs text-gh-dim hover:text-gh-muted hover:border-gh-blue transition">
+          class="px-3 py-2 rounded-md border border-gh-border2 text-xs text-gh-muted hover:text-gh-text hover:border-gh-blue transition">
           Export
         </button>
       </template>
       <!-- Refresh -->
       <button @click="loadWebhooks()" :disabled="webhooksLoading"
         class="px-4 py-2 rounded-md border text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
-        :class="webhooksLoading ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'">
+        :class="webhooksLoading ? 'border-gh-border2 text-gh-muted' : 'border-gh-border2 text-gh-text hover:border-gh-blue'">
         <span x-text="webhooksLoading ? 'Loading...' : 'Refresh'"></span>
       </button>
     </div>
@@ -933,7 +1135,7 @@
   <template x-if="webhooksData">
     <div class="mt-4 space-y-3">
       <!-- Summary -->
-      <div class="text-xs text-gh-dim" x-text="webhooksData.total + ' webhook' + (webhooksData.total !== 1 ? 's' : '') + ' across ' + webhooksData.categories.length + ' categor' + (webhooksData.categories.length !== 1 ? 'ies' : 'y')"></div>
+      <div class="text-xs text-gh-muted" x-text="webhooksData.total + ' webhook' + (webhooksData.total !== 1 ? 's' : '') + ' across ' + webhooksData.categories.length + ' categor' + (webhooksData.categories.length !== 1 ? 'ies' : 'y')"></div>
 
       <!-- Empty state -->
       <div x-show="webhooksData.total === 0" class="bg-gh-card border border-gh-border rounded-lg p-8 text-center text-gh-dim text-sm">No webhooks found on this server</div>
@@ -945,7 +1147,7 @@
             class="w-full flex items-center justify-between px-5 py-3 hover:bg-gh-bg/50 transition cursor-pointer">
             <div class="flex items-center gap-3">
               <h3 class="text-sm font-semibold" x-text="cat.category"></h3>
-              <span class="text-xs text-gh-dim" x-text="cat.webhookCount + ' webhook' + (cat.webhookCount !== 1 ? 's' : '') + ' in ' + cat.channelCount + ' channel' + (cat.channelCount !== 1 ? 's' : '')"></span>
+              <span class="text-xs text-gh-muted" x-text="cat.webhookCount + ' webhook' + (cat.webhookCount !== 1 ? 's' : '') + ' in ' + cat.channelCount + ' channel' + (cat.channelCount !== 1 ? 's' : '')"></span>
             </div>
             <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="webhooksExpanded.includes(ci) && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
           </button>
@@ -953,7 +1155,7 @@
             <div class="border-t border-gh-border divide-y divide-gh-border">
               <template x-for="(ch, chi) in cat.channels" :key="chi">
                 <div class="px-5 py-3">
-                  <div class="text-xs font-medium text-gh-muted mb-2" x-text="'#' + ch.name"></div>
+                  <div class="text-xs font-medium text-gh-text mb-2" x-text="'#' + ch.name"></div>
                   <div class="space-y-2">
                     <template x-for="(wh, wi) in ch.webhooks" :key="wh.id">
                       <div>
@@ -968,13 +1170,13 @@
                             </div>
                           </template>
                           <!-- Name + copy -->
-                          <span class="text-sm font-medium truncate" x-text="wh.name"></span>
+                          <span class="text-sm font-medium text-gh-text truncate" x-text="wh.name"></span>
                           <button @click="copyWebhookUrl(wh.url, wh.name)"
-                            class="shrink-0 text-gh-dim hover:text-gh-blue transition" title="Copy webhook URL">
+                            class="shrink-0 text-gh-muted hover:text-gh-blue transition" title="Copy webhook URL">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                           </button>
                           <!-- Creator + date -->
-                          <span class="text-xs text-gh-dim">
+                          <span class="text-xs text-gh-muted">
                             <span x-show="wh.creator" x-text="wh.creator"></span>
                             <span x-show="wh.creator && wh.createdAt"> &middot; </span>
                             <span x-show="wh.createdAt" x-text="formatDate(wh.createdAt)"></span>
@@ -982,7 +1184,7 @@
                         </div>
                         <!-- URL (toggled) -->
                         <div x-show="webhooksShowUrls" class="ml-10 mt-1">
-                          <span class="text-xs text-gh-dim font-mono break-all select-all" x-text="wh.url"></span>
+                          <span class="text-xs text-gh-muted font-mono break-all select-all" x-text="wh.url"></span>
                         </div>
                       </div>
                     </template>
@@ -1100,6 +1302,94 @@
   </div>
 </template>
 
+<!-- Sort Server modal -->
+<template x-if="sortModal.show">
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="!sortModal.running && (sortModal.show = false)" @keydown.escape.window="!sortModal.running && (sortModal.show = false)">
+    <div class="bg-gh-card border border-gh-border rounded-lg shadow-xl w-full max-w-lg mx-4">
+      <div class="px-5 pt-5 pb-3">
+        <h3 class="text-base font-semibold text-gh-purple mb-3">Sort Server</h3>
+        <p class="text-sm text-gh-muted mb-4">Reorder categories and channels alphabetically on your Discord server.</p>
+
+        <!-- Mode selection -->
+        <div class="flex gap-2 mb-4">
+          <button @click="sortModal.mode = 'categories'" class="flex-1 px-3 py-2 rounded-md border text-xs text-center transition"
+            :class="sortModal.mode === 'categories' ? 'border-purple-700 bg-purple-900/20 text-gh-purple' : 'border-gh-border2 text-gh-muted hover:text-gh-text'">Categories only</button>
+          <button @click="sortModal.mode = 'channels'" class="flex-1 px-3 py-2 rounded-md border text-xs text-center transition"
+            :class="sortModal.mode === 'channels' ? 'border-purple-700 bg-purple-900/20 text-gh-purple' : 'border-gh-border2 text-gh-muted hover:text-gh-text'">Channels only</button>
+          <button @click="sortModal.mode = 'both'" class="flex-1 px-3 py-2 rounded-md border text-xs text-center transition"
+            :class="sortModal.mode === 'both' ? 'border-purple-700 bg-purple-900/20 text-gh-purple' : 'border-gh-border2 text-gh-muted hover:text-gh-text'">Both</button>
+        </div>
+
+        <!-- Included categories info -->
+        <div class="text-xs text-gh-dim mb-4 space-y-1">
+          <template x-if="sortModal.mode === 'categories'">
+            <span class="block">Sorts all categories on the server alphabetically. Per-category toggles do not apply to category ordering.</span>
+          </template>
+          <template x-if="sortModal.mode === 'channels'">
+            <div>
+              <template x-if="sortModal.included.length === 0">
+                <span class="text-gh-yellow">No categories enabled. Enable "Include in sort" on categories in Overview first.</span>
+              </template>
+              <template x-if="sortModal.included.length > 0">
+                <span>Sorting channels in: <span class="text-gh-muted" x-text="sortModal.included.join(', ')"></span></span>
+              </template>
+            </div>
+          </template>
+          <template x-if="sortModal.mode === 'both'">
+            <div>
+              <span class="block">Categories: sorts all categories alphabetically.</span>
+              <template x-if="sortModal.included.length === 0">
+                <span class="block text-gh-yellow">Channels: no categories enabled. Enable "Include in sort" in Overview.</span>
+              </template>
+              <template x-if="sortModal.included.length > 0">
+                <span class="block">Channels in: <span class="text-gh-muted" x-text="sortModal.included.join(', ')"></span></span>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <!-- Dry run results -->
+        <template x-if="sortModal.results">
+          <div class="bg-gh-bg border border-gh-border rounded-lg p-3 mb-4 max-h-48 overflow-y-auto text-xs">
+            <div class="font-semibold text-gh-muted mb-2" x-text="sortModal.results.totalMoves + ' change' + (sortModal.results.totalMoves !== 1 ? 's' : '')"></div>
+            <template x-if="sortModal.results.categories.length > 0">
+              <div class="mb-2">
+                <div class="text-gh-purple mb-1">Categories:</div>
+                <template x-for="cat in sortModal.results.categories" :key="cat.name">
+                  <div class="text-gh-dim pl-2" x-text="cat.name + ': position ' + cat.from + ' → ' + cat.to"></div>
+                </template>
+              </div>
+            </template>
+            <template x-for="catGroup in sortModal.results.channels" :key="catGroup.category">
+              <div class="mb-2">
+                <div class="text-gh-purple mb-1" x-text="catGroup.category + ':'"></div>
+                <template x-for="mv in catGroup.moves" :key="mv.name">
+                  <div class="text-gh-dim pl-2" x-text="'#' + mv.name + ': position ' + mv.from + ' → ' + mv.to"></div>
+                </template>
+              </div>
+            </template>
+            <template x-if="sortModal.results.totalMoves === 0">
+              <div class="text-gh-green">Everything is already in alphabetical order.</div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <div class="px-5 pb-4 flex items-center justify-between border-t border-gh-border pt-3">
+        <button @click="sortModal.show = false" :disabled="sortModal.running"
+          class="px-3 py-1.5 text-sm rounded-md border border-gh-border2 text-gh-muted hover:text-gh-text transition disabled:opacity-50">Cancel</button>
+        <div class="flex gap-2">
+          <button @click="sortDryRun()" :disabled="sortModal.running"
+            class="px-3 py-1.5 text-sm rounded-md border border-gh-border2 text-gh-blue hover:border-gh-blue transition disabled:opacity-50"
+            x-text="sortModal.running ? 'Running...' : 'Preview'"></button>
+          <button @click="sortExecute()" :disabled="sortModal.running || (sortModal.mode === 'channels' && sortModal.included.length === 0)"
+            class="px-3 py-1.5 text-sm rounded-md bg-purple-600 text-white hover:bg-purple-500 transition disabled:opacity-50 disabled:cursor-not-allowed">Sort now</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
 <!-- Toast notifications -->
 <div x-show="toast" x-transition class="fixed bottom-6 right-6 px-4 py-2 rounded-lg text-sm font-medium shadow-lg z-50"
   :class="toastType === 'error' ? 'bg-red-900 text-gh-red border border-red-800' : 'bg-green-900 text-gh-green border border-green-800'"
@@ -1124,7 +1414,6 @@ function app() {
       { id: 'webhooks', label: 'Webhooks' },
       { id: 'statistics', label: 'Statistics' },
       { id: 'config', label: 'Settings' },
-      { id: 'schedule', label: 'Schedule' },
       { id: 'logs', label: 'Logs', badge: 'Live' },
     ],
 
@@ -1133,9 +1422,13 @@ function app() {
     stats: { lastRun: null, history: [] },
     editConfig: { categories: {}, discord: {}, logging: {}, webhooks: {}, gotify: {}, display: {}, scheduleEnabled: true },
     configDirty: false,
-    configSections: { cleanup: false, discord: false, gotify: false, display: false },
+    configSection: 'cleanup',
     webhookTesting: null,
     gotifyTesting: false,
+    retentionMenu: null, // 'catName-idx' key of open dropdown
+    retentionCustom: '',
+    sortModal: { show: false, mode: 'both', included: [], results: null, running: false },
+    settingsExpand: { discord: false, gotify: false, webhookDiscovery: false, sorting: false },
     openCategories: [],
     syncRunning: false,
     syncResults: null,
@@ -1216,6 +1509,7 @@ function app() {
       }, 30000);
       // Chart lifecycle: init when switching to statistics, destroy when leaving
       this.$watch('tab', (newTab, oldTab) => {
+        this.retentionMenu = null;
         if (oldTab === 'statistics') this.destroyStatsCharts();
         if (newTab === 'statistics') this.$nextTick(() => this.initStatsCharts());
         if (newTab === 'webhooks' && !this.webhooksData && !this.webhooksLoading) this.loadWebhooks();
@@ -1287,6 +1581,12 @@ function app() {
           cfg.scheduleEnabled = cfg.scheduleEnabled !== false;
           cfg.display = cfg.display || {};
           cfg.display.timeFormat = cfg.display.timeFormat || '24h';
+          cfg.sortEnabled = !!cfg.sortEnabled;
+          cfg.sortAfterCleanup = !!cfg.sortAfterCleanup;
+          cfg.sortIncludeVoice = !!cfg.sortIncludeVoice;
+          cfg.sortInclude = cfg.sortInclude || {};
+          cfg.sortPinned = cfg.sortPinned || {};
+          cfg.webhookDiscoveryOnSchedule = !!cfg.webhookDiscoveryOnSchedule;
           this.editConfig = cfg;
           this.configDirty = false;
         }
@@ -1743,8 +2043,8 @@ function app() {
           data: {
             labels: tlLabels,
             datasets: [
-              { label: 'Deleted', data: tlPurged, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: '#58a6ff' },
-              { label: 'Errors', data: tlErrors, borderColor: '#f85149', fill: false, tension: 0.3, pointRadius: 2, pointHoverRadius: 5, pointBackgroundColor: '#f85149', borderWidth: 1.5 },
+              { label: 'Deleted', data: tlPurged, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.4, pointRadius: 0, pointHoverRadius: 5, pointBackgroundColor: '#58a6ff', borderWidth: 2 },
+              { label: 'Errors', data: tlErrors, borderColor: '#f85149', fill: false, tension: 0.4, pointRadius: 0, pointHoverRadius: 4, pointBackgroundColor: '#f85149', borderWidth: 1.5 },
             ],
           },
           options: {
@@ -1836,9 +2136,31 @@ function app() {
       if (typeof ch === 'object' && ch !== null) return Object.keys(ch)[0];
       return '';
     },
-    channelOverride(ch) {
-      if (typeof ch === 'object' && ch !== null) return Object.values(ch)[0];
-      return '';
+    retentionMenuPos: '',
+    openRetentionMenu(catName, idx, event, ch) {
+      const key = catName + '-' + idx;
+      if (this.retentionMenu === key) { this.retentionMenu = null; return; }
+      // Position dropdown near the button using fixed positioning
+      const rect = event.currentTarget.getBoundingClientRect();
+      const menuHeight = 130; // approximate height of dropdown
+      const fitsBelow = rect.bottom + menuHeight + 8 < window.innerHeight;
+      const top = fitsBelow ? rect.bottom + 4 : rect.top - menuHeight - 4;
+      this.retentionMenuPos = `top:${top}px;left:${Math.min(rect.left, window.innerWidth - 200)}px`;
+      this.retentionCustom = (typeof ch === 'object' && ch !== null && Object.values(ch)[0] > 0) ? Object.values(ch)[0] : '';
+      this.retentionMenu = key;
+    },
+    retentionBtnText(ch, cat) {
+      const eff = this.channelEffectiveRetention(ch, cat);
+      if (eff === -1) return 'Skipped';
+      const deleteOld = cat.deleteOld !== false;
+      return this.retentionEffect(eff, deleteOld);
+    },
+    applyRetentionCustom(catName, idx) {
+      const val = parseInt(this.retentionCustom, 10);
+      if (!isNaN(val) && val >= 0) {
+        this.setChannelOverride(catName, idx, String(val));
+        this.retentionMenu = null;
+      }
     },
     setChannelOverride(catName, idx, value) {
       const cat = this.editConfig.categories[catName];
@@ -1847,11 +2169,11 @@ function app() {
       const name = this.channelName(ch);
       if (value === '' || value === null || value === undefined) {
         // Remove override — make it a plain string
-        cat._channels[idx] = name;
+        cat._channels.splice(idx, 1, name);
       } else {
         const parsed = parseInt(value, 10);
         if (isNaN(parsed)) return;
-        cat._channels[idx] = { [name]: parsed };
+        cat._channels.splice(idx, 1, { [name]: parsed });
       }
       this.configDirty = true;
     },
@@ -1893,7 +2215,7 @@ function app() {
         this.editConfig.categories[name].default = parsed;
       }
       this.configDirty = true;
-      this.showToast(`Set ${parsed === -1 ? 'never delete' : parsed + ' day'} retention on ${selected.length} categor${selected.length === 1 ? 'y' : 'ies'}`);
+      this.showToast(`Set ${parsed === -1 ? 'never delete' : parsed + ' day' + (parsed !== 1 ? 's' : '')} retention on ${selected.length} categor${selected.length === 1 ? 'y' : 'ies'}`);
       this.massEditOpen = false;
       this.massEditDays = '';
       this.massEditSelected = {};
@@ -1903,25 +2225,68 @@ function app() {
       this.massEditDays = '';
       this.massEditSelected = {};
     },
+    // --- Sort ---
+    toggleCatSort(catName) {
+      if (!this.editConfig.sortInclude) this.editConfig.sortInclude = {};
+      this.editConfig.sortInclude[catName] = !this.editConfig.sortInclude[catName];
+      this.configDirty = true;
+    },
+    openSortModal() {
+      // Collect included categories, filtering out stale entries for deleted categories
+      const knownCats = new Set(Object.keys(this.editConfig.categories || {}));
+      const included = Object.entries(this.editConfig.sortInclude || {})
+        .filter(([name, v]) => v && knownCats.has(name)).map(([name]) => name);
+      this.sortModal = { show: true, mode: 'both', included, results: null, running: false };
+    },
+    async sortDryRun() {
+      const m = this.sortModal;
+      const skipCategories = this.getSortSkipList();
+      m.running = true;
+      m.results = null;
+      try {
+        const res = await fetch('/api/cleanup/sort', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          body: JSON.stringify({ mode: m.mode, dryRun: true, skipCategories, includeVoice: !!this.editConfig.sortIncludeVoice, pinnedPositions: this.editConfig.sortPinned || {} })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Sort failed');
+        m.results = data;
+      } catch (err) {
+        this.showToast(err.message, 'error');
+      } finally {
+        m.running = false;
+      }
+    },
+    async sortExecute() {
+      const m = this.sortModal;
+      const skipCategories = this.getSortSkipList();
+      m.running = true;
+      try {
+        const res = await fetch('/api/cleanup/sort', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          body: JSON.stringify({ mode: m.mode, dryRun: false, skipCategories, includeVoice: !!this.editConfig.sortIncludeVoice, pinnedPositions: this.editConfig.sortPinned || {} })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Sort failed');
+        m.results = data;
+        this.showToast(`Sorted ${data.totalMoves} items`);
+      } catch (err) {
+        this.showToast(err.message, 'error');
+      } finally {
+        m.running = false;
+      }
+    },
+    getSortSkipList() {
+      // All categories NOT in sortInclude are skipped
+      const allCats = Object.keys(this.editConfig.categories || {});
+      const included = this.editConfig.sortInclude || {};
+      return allCats.filter(name => !included[name]);
+    },
     countOverrides(cat) {
       if (!cat._channels || !Array.isArray(cat._channels)) return 0;
       return cat._channels.filter(ch => typeof ch === 'object' && ch !== null).length;
-    },
-    channelRetentionLabel(ch, cat) {
-      if (typeof ch === 'object' && ch !== null) {
-        const val = Object.values(ch)[0];
-        return this.retentionLabel(val) + ' (override)';
-      }
-      const def = cat.default ?? this.editConfig.globalDefault;
-      return this.retentionLabel(def) + ' (default)';
-    },
-    channelRetentionClass(ch, cat) {
-      if (typeof ch === 'object' && ch !== null) {
-        const val = Object.values(ch)[0];
-        if (val === -1) return 'bg-green-900/30 text-gh-green border border-green-800';
-        return 'bg-blue-900/30 text-gh-blue border border-blue-800';
-      }
-      return 'bg-gh-border text-gh-muted';
     },
     channelEffectiveRetention(ch, cat) {
       if (typeof ch === 'object' && ch !== null) return Object.values(ch)[0];
@@ -1929,8 +2294,15 @@ function app() {
     },
     retentionLabel(days) {
       if (days === -1) return 'never';
-      if (days === 0) return 'all';
+      if (days === 0) return '0d';
       return days + 'd';
+    },
+    // Shows the effective delete range based on retention + deleteOld
+    retentionEffect(days, deleteOld) {
+      if (days === -1) return 'never';
+      if (deleteOld !== false) return '>' + days + 'd';
+      if (days >= 14) return '—'; // nothing happens: all deletable msgs are >14d but deleteOld is off
+      return days + '–14d';
     },
 
     // --- Computed ---

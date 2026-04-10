@@ -153,4 +153,31 @@ router.post('/recover', async (req, res) => {
   }
 });
 
+// POST /api/cleanup/sort — sort channels/categories alphabetically
+let sortRunning = false;
+router.post('/sort', async (req, res) => {
+  if (!bot.client.isReady()) {
+    return res.status(503).json({ error: 'Discord not connected' });
+  }
+  if (bot.isCleanupRunning() || syncRunning || sortRunning || bot.isSortRunning() || purgeAllRunning) {
+    return res.status(409).json({ error: 'Another operation is running' });
+  }
+
+  const { mode = 'both', dryRun = false, skipCategories = [], includeVoice = false, pinnedPositions = {} } = req.body || {};
+  if (!['categories', 'channels', 'both'].includes(mode)) {
+    return res.status(400).json({ error: 'Invalid mode — use categories, channels, or both' });
+  }
+
+  sortRunning = true;
+  try {
+    const results = await bot.sortServer({ mode, dryRun, skipChannelsInCategories: skipCategories, includeVoice, pinnedPositions });
+    res.json(results);
+  } catch (err) {
+    bot.log('ERROR', `Sort failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  } finally {
+    sortRunning = false;
+  }
+});
+
 module.exports = router;
