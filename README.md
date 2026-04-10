@@ -22,20 +22,32 @@ Built for servers with many channels (media automation, homelab, development) wh
 
 ## Features
 
+### Cleanup
 - **Hierarchical retention** — channel override > category default > global default
-- **Web UI** — manage categories, edit retention, trigger runs, view logs — all from a browser
-- **Auto-discovery** — new channels and categories are detected automatically before each run
+- **Per-channel retention dropdown** — Default (inherit category), Skip (never delete), or Custom days. Shows effective delete range (>7d, 7-14d, etc.)
+- **Auto-discovery** — new channels and categories detected automatically after each scheduled run
 - **Allow-list safety** — only channels explicitly listed in config are processed
 - **Dry-run mode** — see what would be deleted before enabling live cleanup
-- **Per-channel and per-category runs** — test or clean individual channels from the UI
-- **Inline results** — run results appear directly in the UI (no log-hunting)
-- **Cancel cleanup** — stop a running cleanup from any tab via the header Stop button
-- **Live log streaming** — SSE-based real-time log viewer with level filtering and progress updates
-- **Scheduled cleanup** — cron-based scheduling with timezone support
-- **Hot-reload config** — edit config.yaml or use the Web UI — changes take effect on next run
-- **Webhook notifications** — cleanup summaries and auto-discovery alerts to Discord
 - **Purge All** — delete and recreate a channel to instantly clear all history, with webhook recreation and recovery safety net
 - **>14-day delete support** — individually deletes messages older than Discord's bulk-delete limit
+- **Cancel cleanup** — stop a running cleanup from any tab via the header Stop button
+
+### Discord Tools
+- **Channel & Category Sorting** — sort Discord server categories and channels alphabetically. Manual via Sort Now or automatic after scheduled cleanup. Per-category opt-in with pinned positions (lock to first, last, or specific position)
+- **Webhook Discovery** — browse all server webhooks grouped by category and channel, with optional scheduled scanning
+
+### Web UI
+- **Centered layout** — clean, readable interface with sidebar Settings navigation
+- **Category grid overview** — fixed columns (Category, Deletes, Overrides, Cleanup, Sort, Pin) show feature status at a glance
+- **Settings sidebar** — Cleanup, Notifications, Schedule, Discord Tools, General
+- **Inline results** — run results appear directly in the UI
+- **Live log streaming** — SSE-based real-time log viewer with level filtering
+- **Statistics** — deletion history charts, category breakdown, top channels
+
+### Infrastructure
+- **Scheduled cleanup** — cron-based scheduling with timezone support. Post-cleanup: auto-sync → webhook discovery → auto-sort
+- **Webhook notifications** — cleanup summaries, discovery alerts, and sort results to Discord + Gotify
+- **Hot-reload config** — edit config.yaml or use the Web UI — changes take effect on next run
 - **Atomic config writes** — write-to-temp then rename prevents corruption
 - **Docker-native** — PUID/PGID/UMASK, healthcheck, Alpine-based (~45 MB)
 
