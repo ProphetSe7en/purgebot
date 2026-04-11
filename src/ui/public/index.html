@@ -18,7 +18,7 @@
           gh: {
             bg: '#0d1117', card: '#161b22', border: '#21262d',
             border2: '#30363d', text: '#e1e4e8', muted: '#8b949e',
-            dim: '#484f58', blue: '#58a6ff', green: '#3fb950',
+            dim: '#7d8590', blue: '#58a6ff', green: '#3fb950',
             red: '#f85149', yellow: '#d29922', purple: '#bc8cff',
           }
         }
@@ -189,22 +189,22 @@
     <div class="flex items-center gap-3 mb-1.5">
       <span class="text-xs text-gh-muted w-24 shrink-0">Cleanup <span class="text-gh-dim" x-text="'· ' + Object.values(editConfig.categories || {}).filter(c => c.enabled).length + '/' + Object.keys(editConfig.categories || {}).length"></span></span>
       <button @click="Object.values(editConfig.categories).forEach(c => c.enabled = true); configDirty = true"
-        class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-green hover:border-green-800 transition" style="min-width:62px">Enable All</button>
+        class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-border text-gh-text hover:text-gh-green hover:border-green-800 transition" style="min-width:62px">Enable All</button>
       <button @click="Object.values(editConfig.categories).forEach(c => c.enabled = false); configDirty = true"
-        class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-red hover:border-red-800 transition" style="min-width:66px">Disable All</button>
+        class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-border text-gh-text hover:text-gh-red hover:border-red-800 transition" style="min-width:66px">Disable All</button>
       <button @click="massEditOpen = !massEditOpen; if (!massEditOpen) massEditReset()"
-        class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-blue hover:border-gh-blue transition" style="min-width:76px"
+        class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-border text-gh-text hover:text-gh-blue hover:border-gh-blue transition" style="min-width:76px"
         :class="massEditOpen && 'text-gh-blue border-gh-blue'">Set Retention</button>
     </div>
     <template x-if="editConfig.sortEnabled">
       <div class="flex items-center gap-3 mb-2">
         <span class="text-xs text-gh-muted w-24 shrink-0">Sort <span class="text-gh-dim" x-text="'· ' + Object.entries(editConfig.sortInclude || {}).filter(([,v]) => v).length + '/' + Object.keys(editConfig.categories || {}).length"></span></span>
         <button @click="Object.keys(editConfig.categories || {}).forEach(n => { if (!editConfig.sortInclude) editConfig.sortInclude = {}; editConfig.sortInclude[n] = true; }); configDirty = true"
-          class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-purple hover:border-purple-800 transition" style="min-width:62px">Enable All</button>
+          class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-border text-gh-text hover:text-gh-purple hover:border-purple-800 transition" style="min-width:62px">Enable All</button>
         <button @click="editConfig.sortInclude = {}; configDirty = true"
-          class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-red hover:border-red-800 transition" style="min-width:66px">Disable All</button>
+          class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-border text-gh-text hover:text-gh-red hover:border-red-800 transition" style="min-width:66px">Disable All</button>
         <button @click="openSortModal()"
-          class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-muted hover:text-gh-purple hover:border-purple-800 transition" style="min-width:76px">Sort Now</button>
+          class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-border text-gh-text hover:text-gh-purple hover:border-purple-800 transition" style="min-width:76px">Sort Now</button>
       </div>
     </template>
     <!-- Mass edit retention panel -->
@@ -554,8 +554,8 @@
               <div class="flex items-center gap-4 mb-2">
                 <div class="w-48 shrink-0"><div class="text-sm">Cleanup Webhook</div><div class="text-xs text-gh-dim">Summary embeds after each run</div></div>
                 <button @click="testWebhook('cleanup')" :disabled="!editConfig.webhooks?.cleanup || webhookTesting === 'cleanup'"
-                  class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
-                  :class="webhookTesting === 'cleanup' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
+                  class="shrink-0 px-3 py-1.5 rounded-md border bg-gh-border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  :class="webhookTesting === 'cleanup' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-text hover:border-gh-blue'"
                   x-text="webhookTesting === 'cleanup' ? 'Sending...' : 'Test'"></button>
               </div>
               <input x-model="editConfig.webhooks.cleanup" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
@@ -569,8 +569,8 @@
               <div class="flex items-center gap-4 mb-2">
                 <div class="w-48 shrink-0"><div class="text-sm">Info Webhook</div><div class="text-xs text-gh-dim">Discovery notifications (new channels)</div></div>
                 <button @click="testWebhook('info')" :disabled="!editConfig.webhooks?.info || webhookTesting === 'info'"
-                  class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
-                  :class="webhookTesting === 'info' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
+                  class="shrink-0 px-3 py-1.5 rounded-md border bg-gh-border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  :class="webhookTesting === 'info' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-text hover:border-gh-blue'"
                   x-text="webhookTesting === 'info' ? 'Sending...' : 'Test'"></button>
               </div>
               <input x-model="editConfig.webhooks.info" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
@@ -611,8 +611,8 @@
                   <div class="flex items-center gap-4 mb-2">
                     <div class="w-48 shrink-0"><div class="text-sm">Server URL</div></div>
                     <button @click="testGotify()" :disabled="!editConfig.gotify?.url || !editConfig.gotify?.token || gotifyTesting"
-                      class="shrink-0 px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
-                      :class="gotifyTesting ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue'"
+                      class="shrink-0 px-3 py-1.5 rounded-md border bg-gh-border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+                      :class="gotifyTesting ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-text hover:border-gh-blue'"
                       x-text="gotifyTesting ? 'Sending...' : 'Test'"></button>
                   </div>
                   <input x-model="editConfig.gotify.url" @input="configDirty = true" placeholder="http://gotify:80" autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
@@ -675,7 +675,7 @@
         <div x-show="settingsExpand.permissions" x-collapse class="px-4 pb-4 border-t border-gh-border">
           <div class="flex items-center gap-3 py-3">
             <button @click="checkPerms()" :disabled="permChecking"
-              class="text-xs px-3 py-1.5 rounded-md border border-gh-border2 text-gh-muted hover:text-gh-text hover:border-gh-blue transition disabled:opacity-50"
+              class="text-xs px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-border text-gh-text hover:border-gh-blue transition disabled:opacity-50"
               x-text="permChecking ? 'Checking...' : 'Check Permissions'"></button>
             <span x-show="permCheck?.isAdmin" class="text-xs text-gh-green">Administrator — all features available</span>
           </div>

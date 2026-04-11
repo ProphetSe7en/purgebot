@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.3.1
+
+### Improvements
+
+- **Readable helper text** — Bumped `gh-dim` from `#484f58` to `#7d8590` so all descriptive text under settings labels passes WCAG AA contrast (5.0:1) on the dark background. Affects Settings tab descriptions, stat card subtext, empty-state messages.
+- **Visible secondary buttons** — Test (Cleanup/Info webhooks, Gotify), Check Permissions, and the six Overview category buttons (Enable All / Disable All / Set Retention / Sort Now ×2 / Enable All sort) now have a `bg-gh-border` raised fill and bright label text instead of disappearing into the background.
+
 ## v1.3.0
 
 ### Features
