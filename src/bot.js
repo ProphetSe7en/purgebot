@@ -1335,8 +1335,14 @@ client.once('clientReady', () => {
   log('INFO', `Logged in as ${client.user.tag}`);
   log('INFO', `Guild: ${GUILD_ID}`);
 
-  // (#6) Write initial heartbeat on startup
+  // Liveness heartbeat — written every 5 min (plus on startup and after
+  // each cleanup run, see writeHeartbeat callers). The healthcheck in
+  // Dockerfile rejects the container if this file stops being updated.
+  // Earlier versions only wrote on startup + scheduled-run completion,
+  // so containers with schedule disabled (or no matching categories)
+  // went unhealthy after 28 h and Docker restarted them in a loop.
   writeHeartbeat();
+  setInterval(writeHeartbeat, 5 * 60 * 1000);
 
   // Sync config with Discord channels if --sync flag
   if (process.argv.includes('--sync')) {

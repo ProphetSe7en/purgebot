@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.3.2
+
+Healthcheck fix. PurgeBot's Docker healthcheck tied liveness to "did a scheduled cleanup run complete recently", which is wrong — a healthcheck should verify the process is alive and responsive, not that it has done application-level work lately.
+
+### Fixed
+
+- **Container no longer flaps unhealthy → restart every 28 hours when `scheduleEnabled: false`.** The healthcheck rule required `/tmp/healthcheck` to be fresher than 100 800 s (28 h), but `writeHeartbeat()` was only called on startup and after a successful scheduled cleanup. Users who disabled the schedule (UI-only / manual-purge workflows) never saw the heartbeat updated after startup → 28 h later Docker marked the container unhealthy → restart → new heartbeat → repeat. Perfect 28 h restart loop, observed cleanly in logs. Fix: `setInterval(writeHeartbeat, 5 * 60 * 1000)` in `clientReady`. Heartbeat now reflects process liveness (what a healthcheck is actually for), independent of whether cleanup ran.
+- **Healthcheck cutoff reduced from 100 800 s (28 h) to 900 s (15 min).** With the heartbeat now updated every 5 min, 15 min gives a 3× buffer. Brings the fail-fast window down from "missed a whole day" to "missed three heartbeats".
+
+### Notes
+
+- No breaking changes. No config changes. Schedule-enabled users see no behavioural difference.
+- If you had PurgeBot configured for UI-only use with `scheduleEnabled: false`, the 1/day restart loop stops on upgrade.
+
 ## v1.3.1
 
 ### Improvements

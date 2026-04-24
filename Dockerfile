@@ -31,7 +31,7 @@ ENV UMASK=002
 EXPOSE 3050
 
 HEALTHCHECK --interval=60s --timeout=5s --retries=3 \
-    CMD test -f /tmp/healthcheck && test $(($(date +%s) - $(cat /tmp/healthcheck))) -lt 100800 || exit 1
+    CMD test -f /tmp/healthcheck && test $(($(date +%s) - $(cat /tmp/healthcheck))) -lt 900 || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
 LABEL org.opencontainers.image.title="PurgeBot" \
