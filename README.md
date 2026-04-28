@@ -396,6 +396,10 @@ For questions, help, or bug reports:
 - **Discord:** [`#prophetse7en-apps`](https://discordapp.com/channels/492590071455940612/1486391669384417300) on the [TRaSH Guides Discord](https://trash-guides.info/discord) (under Community Apps)
 - **GitHub:** [prophetse7en/purgebot/issues](https://github.com/prophetse7en/purgebot/issues)
 
+## Development
+
+PurgeBot is developed with active AI assistance (Claude, Anthropic) under human direction. Architectural decisions, code review, testing on a real Unraid + Radarr/Sonarr stack, and releases are done by ProphetSe7en. Issues and PRs go through a human review.
+
 ## License
 
 MIT
