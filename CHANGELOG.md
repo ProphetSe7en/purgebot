@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.4.0
+
+See where your cleanup time goes, and understand the warnings.
+
+### Added
+
+- **Per-channel time in the run results.** Each channel now shows how long it took, so you can tell at a glance which channel is taking the time instead of reading the log. Each category shows its total time too.
+- **Plain-language warnings and errors per channel.** When a channel has something to flag, it now appears right in the run results with a clear explanation, so you don't have to open the log. For example, a channel with many messages older than 14 days shows how many are still waiting and roughly how many more runs it needs. A permission problem shows what to check.
+- **"Waiting on Discord" time.** When a run is slow, PurgeBot now shows how much of the time was spent waiting on Discord's own rate limit rather than PurgeBot being slow. Removing messages older than 14 days is limited by Discord to roughly one every few seconds, and this makes that visible. It appears next to the channel time and as a per-run summary line in the log.
+
+### Changed
+
+- **Notifications now include timing.** The per-category Discord message and the run summary now show how long each category took, plus a note about any channels still working through older messages.
+- **Clearer guidance on the "Max Old Deletes Per Channel" setting.** The help text now explains that messages older than 14 days are removed one at a time under Discord's rate limit, so a higher number means a longer run.
+
 ## v1.3.2
 
 Healthcheck fix. PurgeBot's Docker healthcheck tied liveness to "did a scheduled cleanup run complete recently", which is wrong — a healthcheck should verify the process is alive and responsive, not that it has done application-level work lately.

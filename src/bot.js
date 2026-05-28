@@ -294,6 +294,18 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
 });
 
+// Tracks how long Discord makes us wait on rate limits. discord.js obeys
+// every 429 by sleeping for the time Discord dictates, so this is wall-time
+// we have no control over. The cleanup loop snapshots totalMs around each
+// channel to show how much of a channel's run time was Discord throttling
+// (deleting messages older than 14 days has a strict, separate limit).
+const rateLimitTracker = { totalMs: 0, hits: 0 };
+client.rest.on('rateLimited', (info) => {
+  const waitMs = info.timeToReset ?? info.retryAfter ?? 0;
+  rateLimitTracker.totalMs += waitMs;
+  rateLimitTracker.hits++;
+});
+
 // --- Webhook Notification ---
 
 async function sendWebhook(embeds) {
@@ -336,6 +348,20 @@ async function sendSummaryNotification(runStats) {
     description += `\n⚠ Cancelled (partial run)`;
   }
 
+  // Channels still carrying messages older than 14 days, surfaced so the
+  // reader knows why a run took a while and which channels need more runs.
+  const backloggedChannels = [];
+  for (const [, s] of Object.entries(runStats.categories || {})) {
+    for (const ch of (s.channels || [])) {
+      if (ch.oldRemaining > 0) backloggedChannels.push(ch.name);
+    }
+  }
+  if (backloggedChannels.length > 0) {
+    const shown = backloggedChannels.slice(0, 5).map(n => '#' + n).join(', ');
+    const more = backloggedChannels.length > 5 ? ` and ${backloggedChannels.length - 5} more` : '';
+    description += `\n⏳ Still clearing older messages in ${shown}${more}. These finish over the next few runs.`;
+  }
+
   // Discord notification
   const webhookUrl = config.webhooks.info;
   if (webhookUrl) {
@@ -370,7 +396,7 @@ async function sendSummaryNotification(runStats) {
   if (activeCats.length > 0) {
     gotifyMsg += '\n';
     for (const [catName, stats] of activeCats) {
-      let line = `- **${catName}:** ${stats.purged} purged`;
+      let line = `- **${catName}:** ${stats.purged} purged in ${formatDuration(stats.durationMs)}`;
       if (stats.errors > 0) line += `, ${stats.errors} error${stats.errors !== 1 ? 's' : ''}`;
       gotifyMsg += '\n' + line;
     }
@@ -388,21 +414,45 @@ function formatDuration(ms) {
   return rem > 0 ? `${m}m ${rem}s` : `${m}m`;
 }
 
+// Turn a raw Discord/API error into a plain sentence a non-technical
+// PurgeBot user can act on. Raw messages still go to the log; this is
+// what we show in the dashboard and notifications.
+function humanizeError(msg) {
+  const m = (msg || '').toLowerCase();
+  if (m.includes('missing permissions') || m.includes('50013') ||
+      m.includes('missing access') || m.includes('50001')) {
+    return "PurgeBot is missing permission to manage messages in this channel.";
+  }
+  if (m.includes('rate limit') || m.includes('429')) {
+    return "Discord asked PurgeBot to slow down here; the rest will be picked up on the next run.";
+  }
+  if (m.includes('unknown channel') || m.includes('10003')) {
+    return "This channel no longer exists on the server.";
+  }
+  return "PurgeBot couldn't finish this channel. Check that it can see and manage messages here, then try again.";
+}
+
 // (#14) Truncate embed description to stay within Discord's 4096 char limit
 function buildCategoryEmbed(catName, channelResults, hasErrors, isDryRun) {
   const prefix = isDryRun ? 'Dry Run — ' : '';
   const lines = [];
 
   for (const ch of channelResults) {
-    // Only show channels with activity or errors
+    // Only show channels with activity, warnings, or errors
     if (ch.error) {
       lines.push(`#${ch.name} — ❌ ${ch.error}`);
     } else if (ch.purged > 0) {
       const source = ch.retentionSource === 'override' ? ' (override)' : '';
       lines.push(`#${ch.name} — ${ch.retention}d${source} — **${ch.purged} purged**`);
     }
+    // Surface plain-language warnings (e.g. an >14-day backlog) right
+    // under the channel so the reader sees why it keeps coming back.
+    for (const w of (ch.warnings || [])) {
+      lines.push(`#${ch.name} — ⚠ ${w}`);
+    }
   }
 
+  const catDurationMs = channelResults.reduce((sum, ch) => sum + (ch.durationMs || 0), 0);
   const totalPurged = channelResults.reduce((sum, ch) => sum + (ch.purged || 0), 0);
   const successColor = parseInt((config.webhooks?.cleanupColor || '#238636').replace('#', ''), 16) || 0x238636;
   let color = isDryRun ? 0x3498db : successColor;
@@ -418,7 +468,7 @@ function buildCategoryEmbed(catName, channelResults, hasErrors, isDryRun) {
     title: `${prefix}Message Cleanup — ${catName}`,
     description,
     color,
-    footer: { text: `${channelResults.length} channels • ${totalPurged} messages ${isDryRun ? 'would be purged' : 'purged'} · PurgeBot v${version} by ProphetSe7en` },
+    footer: { text: `${channelResults.length} channels • ${totalPurged} messages ${isDryRun ? 'would be purged' : 'purged'} • ${formatDuration(catDurationMs)} · PurgeBot v${version} by ProphetSe7en` },
     timestamp: new Date().toISOString(),
   };
 }
@@ -816,6 +866,8 @@ async function runCleanup(options = {}) {
   cleanupStartTime = Date.now();
 
   const startTime = Date.now();
+  const runRlStart = rateLimitTracker.totalMs;
+  const runRlHitsStart = rateLimitTracker.hits;
   let effectiveDryRun = forceDryRun;
 
   try {
@@ -881,6 +933,7 @@ async function runCleanup(options = {}) {
       const cat = config.categories[catName];
       const deleteOld = cat.deleteOld !== false; // defaults to true
       const channelResults = [];
+      const catStart = Date.now();
       let catErrors = false;
       const allowedCount = [...channels].filter(c => allowedChannels.has(c.name)).length;
       let channelIndex = 0;
@@ -917,6 +970,9 @@ async function runCleanup(options = {}) {
           emitProgress({ category: catName, channel: result, totalProcessed, totalPurged, totalErrors, dryRun: effectiveDryRun });
           continue;
         }
+
+        const chanStart = Date.now();
+        const rlStart = rateLimitTracker.totalMs;
 
         // Calculate cutoff date
         const now = new Date();
@@ -957,6 +1013,7 @@ async function runCleanup(options = {}) {
 
           const totalDeletable = bulkDeletable.length + oldDeletable.length;
           let deleted = 0;
+          let failedDeletes = 0;
 
           if (totalDeletable === 0) {
             log('INFO', `  ${catName}/#${chanName}: 0 messages to delete (${fetched} scanned, retention=${retention}d)`);
@@ -984,6 +1041,7 @@ async function runCleanup(options = {}) {
                   await batch[0].delete();
                   deleted++;
                 } catch (delErr) {
+                  failedDeletes++;
                   log('WARN', `${catName}/#${chanName}: failed to delete message ${batch[0].id}: ${delErr.message}`);
                 }
               } else {
@@ -996,7 +1054,7 @@ async function runCleanup(options = {}) {
             const maxOld = config.discord.maxOldDeletesPerChannel;
             const oldToDelete = oldDeletable.slice(0, maxOld);
             if (oldToDelete.length > 0) {
-              log('INFO', `  ${catName}/#${chanName}: deleting ${oldToDelete.length} old messages (>14d, ~${Math.ceil(oldToDelete.length * 1.2)}s)...`);
+              log('INFO', `  ${catName}/#${chanName}: removing ${oldToDelete.length} messages older than 14 days, one at a time (Discord limits this, so roughly ${formatDuration(oldToDelete.length * 3000)})...`);
             }
             let oldDeletedCount = 0;
             for (const msg of oldToDelete) {
@@ -1010,15 +1068,18 @@ async function runCleanup(options = {}) {
                   log('INFO', `  ${catName}/#${chanName}: ${oldDeletedCount}/${oldToDelete.length} old messages deleted...`);
                 }
               } catch (delErr) {
+                failedDeletes++;
                 log('WARN', `${catName}/#${chanName}: failed to delete message ${msg.id}: ${delErr.message}`);
               }
               await sleep(config.discord.delayBetweenDeletes);
             }
             if (oldDeletable.length > maxOld) {
-              log('WARN', `${catName}/#${chanName}: ${oldDeletable.length - maxOld} old messages remain (capped at ${maxOld}/run)`);
+              log('WARN', `${catName}/#${chanName}: ${oldDeletable.length - maxOld} messages older than 14 days still waiting (PurgeBot removes up to ${maxOld} of these per run)`);
             }
 
-            log('INFO', `${catName}/#${chanName}: deleted ${deleted} messages (retention=${retention}d)`);
+            const chanWaitMs = rateLimitTracker.totalMs - rlStart;
+            const waitNote = chanWaitMs >= 1000 ? `, ${formatDuration(chanWaitMs)} of that waiting on Discord rate limits` : '';
+            log('INFO', `${catName}/#${chanName}: deleted ${deleted} messages in ${formatDuration(Date.now() - chanStart)}${waitNote} (retention=${retention}d)`);
             totalPurged += deleted;
           }
 
@@ -1026,10 +1087,33 @@ async function runCleanup(options = {}) {
           const maxOldForCount = config.discord.maxOldDeletesPerChannel;
           const cappedTotal = bulkDeletable.length + Math.min(oldDeletable.length, maxOldForCount);
           const purgedCount = effectiveDryRun ? cappedTotal : deleted;
-          channelResults.push({ name: chanName, retention, retentionSource, purged: purgedCount });
+
+          // Per-channel warnings, written in plain language for the
+          // dashboard + notifications so users don't need to read the log.
+          const warnings = [];
+          const oldRemaining = deleteOld ? Math.max(0, oldDeletable.length - maxOldForCount) : 0;
+          if (oldRemaining > 0) {
+            const runsLeft = Math.ceil(oldRemaining / maxOldForCount);
+            warnings.push(`${oldRemaining} message${oldRemaining !== 1 ? 's' : ''} older than 14 days ${oldRemaining !== 1 ? 'are' : 'is'} still waiting. Discord only lets PurgeBot remove a limited number of these each run, so this channel finishes over about ${runsLeft} more run${runsLeft !== 1 ? 's' : ''}.`);
+          }
+          if (failedDeletes > 0) {
+            warnings.push(`PurgeBot couldn't remove ${failedDeletes} message${failedDeletes !== 1 ? 's' : ''} here, possibly because it's missing permission to manage messages in this channel.`);
+          }
+
+          channelResults.push({
+            name: chanName, retention, retentionSource, purged: purgedCount,
+            durationMs: Date.now() - chanStart,
+            rateLimitMs: rateLimitTracker.totalMs - rlStart,
+            oldRemaining,
+            warnings,
+          });
         } catch (err) {
           log('ERROR', `${catName}/#${chanName}: ${err.message}`);
-          channelResults.push({ name: chanName, retention, retentionSource, purged: 0, error: err.message });
+          channelResults.push({
+            name: chanName, retention, retentionSource, purged: 0,
+            error: humanizeError(err.message),
+            durationMs: Date.now() - chanStart,
+          });
           catErrors = true;
           totalErrors++;
         }
@@ -1055,6 +1139,7 @@ async function runCleanup(options = {}) {
         processed: channelResults.length,
         purged: catPurged,
         errors: catErrors_count,
+        durationMs: Date.now() - catStart,
         channels: channelResults,
       };
 
@@ -1081,6 +1166,15 @@ async function runCleanup(options = {}) {
     const cancelled = cleanupCancelled;
     const action = effectiveDryRun ? 'would delete' : 'deleted';
     log('INFO', `Cleanup ${cancelled ? 'cancelled' : 'complete'}: ${totalProcessed} channels processed, ${totalPurged} messages ${action}, ${totalSkipped} skipped, ${totalErrors} errors`);
+
+    // Surface how much of this run was spent waiting on Discord's rate
+    // limits (mostly the strict limit on removing messages older than 14
+    // days). Confirms whether slow runs are Discord throttling vs our work.
+    const runRlMs = rateLimitTracker.totalMs - runRlStart;
+    const runRlHits = rateLimitTracker.hits - runRlHitsStart;
+    if (runRlMs >= 1000) {
+      log('INFO', `This run spent ${formatDuration(runRlMs)} waiting on Discord rate limits (${runRlHits} times). Removing messages older than 14 days is limited by Discord, not PurgeBot.`);
+    }
 
     // Persist final stats to stats.json (overwrites incremental data with complete run)
     const duration = Date.now() - startTime;

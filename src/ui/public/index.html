@@ -389,11 +389,29 @@
                 <span x-show="!categoryResults[catName].dryRun" class="text-[10px] text-gh-green bg-green-900/30 px-1.5 py-0.5 rounded border border-green-800">live</span>
               </div>
               <template x-for="ch in categoryResults[catName].channels" :key="ch.name">
-                <div class="flex items-center justify-between py-1 text-xs border-b border-gh-bg last:border-b-0">
-                  <span class="text-gh-muted"><span class="text-gh-dim">#</span><span x-text="ch.name"></span></span>
-                  <span class="font-semibold"
-                    :class="ch.skipped ? 'text-gh-dim' : (ch.purged > 0 ? 'text-gh-red' : 'text-gh-green')"
-                    x-text="ch.skipped ? 'skipped (never delete)' : (ch.purged > 0 ? ch.purged + ' messages' : '0 (all within retention)')"></span>
+                <div class="py-1 border-b border-gh-bg last:border-b-0">
+                  <div class="flex items-center justify-between text-xs">
+                    <span class="text-gh-muted">
+                      <span class="text-gh-dim">#</span><span x-text="ch.name"></span>
+                      <span x-show="ch.durationMs" class="text-gh-dim ml-1" x-text="'· ' + formatDuration(ch.durationMs)"></span>
+                      <span x-show="ch.rateLimitMs >= 1000" class="text-gh-dim ml-1"
+                        :title="'Discord limits how fast old messages can be removed; ' + formatDuration(ch.rateLimitMs) + ' of this was waiting on Discord.'"
+                        x-text="'(' + formatDuration(ch.rateLimitMs) + ' waiting on Discord)'"></span>
+                    </span>
+                    <span class="font-semibold"
+                      :class="ch.skipped ? 'text-gh-dim' : (ch.error ? 'text-gh-red' : (ch.purged > 0 ? 'text-gh-red' : 'text-gh-green'))"
+                      x-text="ch.skipped ? 'skipped (never delete)' : (ch.error ? 'problem' : (ch.purged > 0 ? ch.purged + ' messages' : '0 (all within retention)'))"></span>
+                  </div>
+                  <template x-if="ch.error">
+                    <div class="mt-1 flex items-start gap-1 text-[11px] text-gh-red">
+                      <span class="shrink-0">⛔</span><span x-text="ch.error"></span>
+                    </div>
+                  </template>
+                  <template x-for="w in (ch.warnings || [])" :key="w">
+                    <div class="mt-1 flex items-start gap-1 text-[11px] text-gh-yellow">
+                      <span class="shrink-0">⚠</span><span x-text="w"></span>
+                    </div>
+                  </template>
                 </div>
               </template>
             </div>
@@ -513,7 +531,7 @@
           <input type="number" x-model.number="editConfig.discord.maxMessagesPerChannel" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="1">
         </div>
         <div class="flex items-center gap-4 py-3">
-          <div class="w-64 shrink-0"><div class="text-sm">Max Old Deletes Per Channel</div><div class="text-xs text-gh-dim">Messages >14 days deleted individually (≈0.4s each). 0 = skip. High values are safe but slow — 200 ≈ 80s per channel.</div></div>
+          <div class="w-64 shrink-0"><div class="text-sm">Max Old Deletes Per Channel</div><div class="text-xs text-gh-dim">Messages older than 14 days must be removed one at a time, and Discord only allows roughly one every few seconds. A higher number means a much longer run (around 50 can take a few minutes). 0 = leave messages older than 14 days alone.</div></div>
           <input type="number" x-model.number="editConfig.discord.maxOldDeletesPerChannel" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="0">
         </div>
         <div class="flex items-center gap-4 py-3">
@@ -524,7 +542,7 @@
           </div>
         </div>
         <div class="flex items-center gap-4 py-3">
-          <div class="w-64 shrink-0"><div class="text-sm">Delay Between Deletes</div><div class="text-xs text-gh-dim">Pause between individual old message deletes (>14d). Min 200ms.</div></div>
+          <div class="w-64 shrink-0"><div class="text-sm">Delay Between Deletes</div><div class="text-xs text-gh-dim">Extra pause PurgeBot adds between old-message deletes. Discord's own rate limit usually adds several seconds on top, so changing this has little effect. Min 200ms.</div></div>
           <div class="flex items-center gap-2">
             <input type="number" x-model.number="editConfig.discord.delayBetweenDeletes" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-24 text-right focus:border-gh-blue outline-none" min="200">
             <span class="text-xs text-gh-dim">ms</span>
@@ -1069,13 +1087,35 @@
               :class="catData.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-muted'"
               x-text="catData.purged > 0 ? catData.purged + (cleanupResults.dryRun ? ' to delete' : ' deleted') : 'nothing to delete'"></span>
             <span class="text-xs font-normal" :class="cleanupResults.dryRun ? 'text-gh-yellow' : 'text-gh-green'" x-text="cleanupResults.dryRun ? 'dry-run' : 'live'"></span>
+            <span x-show="(catData.channels||[]).some(c => c.oldRemaining > 0)"
+              class="text-[10px] text-gh-yellow bg-yellow-900/30 px-1.5 py-0.5 rounded border border-yellow-800"
+              title="Some channels still have messages older than 14 days waiting. They finish over the next few runs.">more runs needed</span>
+            <span class="text-xs font-normal text-gh-dim ml-auto self-center" x-show="catData.durationMs" x-text="formatDuration(catData.durationMs)"></span>
           </div>
           <template x-for="(ch, chi) in (catData.channels || []).slice().sort((a,b) => a.name.localeCompare(b.name))" :key="ch.name + '-' + chi">
-            <div class="flex items-center justify-between py-1 text-xs border-b border-gh-border last:border-b-0">
-              <span class="text-gh-muted"><span class="text-gh-dim">#</span><span x-text="ch.name"></span></span>
-              <span class="font-semibold"
-                :class="ch.skipped ? 'text-gh-dim' : (ch.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-green')"
-                x-text="ch.skipped ? 'skipped (never delete)' : (ch.purged > 0 ? ch.purged + ' messages' : '0 (all within retention)')"></span>
+            <div class="py-1 border-b border-gh-border last:border-b-0">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-gh-muted">
+                  <span class="text-gh-dim">#</span><span x-text="ch.name"></span>
+                  <span x-show="ch.durationMs" class="text-gh-dim ml-1" x-text="'· ' + formatDuration(ch.durationMs)"></span>
+                  <span x-show="ch.rateLimitMs >= 1000" class="text-gh-dim ml-1"
+                    :title="'Discord limits how fast old messages can be removed; ' + formatDuration(ch.rateLimitMs) + ' of this was waiting on Discord.'"
+                    x-text="'(' + formatDuration(ch.rateLimitMs) + ' waiting on Discord)'"></span>
+                </span>
+                <span class="font-semibold"
+                  :class="ch.skipped ? 'text-gh-dim' : (ch.error ? 'text-gh-red' : (ch.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-green'))"
+                  x-text="ch.skipped ? 'skipped (never delete)' : (ch.error ? 'problem' : (ch.purged > 0 ? ch.purged + ' messages' : '0 (all within retention)'))"></span>
+              </div>
+              <template x-if="ch.error">
+                <div class="mt-1 flex items-start gap-1 text-[11px] text-gh-red">
+                  <span class="shrink-0">⛔</span><span x-text="ch.error"></span>
+                </div>
+              </template>
+              <template x-for="w in (ch.warnings || [])" :key="w">
+                <div class="mt-1 flex items-start gap-1 text-[11px] text-gh-yellow">
+                  <span class="shrink-0">⚠</span><span x-text="w"></span>
+                </div>
+              </template>
             </div>
           </template>
         </div>
