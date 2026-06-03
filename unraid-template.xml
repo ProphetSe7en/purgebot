@@ -9,7 +9,7 @@
   </Branch>
   <Branch>
     <Tag>dev</Tag>
-    <TagDescription>Development builds — may contain bugs or breaking changes</TagDescription>
+    <TagDescription>Development builds - may contain bugs or breaking changes</TagDescription>
   </Branch>
   <Network>bridge</Network>
   <Shell>sh</Shell>

@@ -1,0 +1,61 @@
+/*
+ * PurgeBot design tokens.
+ *
+ * All colors flow through here. Tailwind classes (bg-gh-bg, text-gh-text, ...)
+ * resolve to these variables via tailwind.config.js, so markup stays exactly
+ * the same as before - only the value behind each class is now a CSS var.
+ *
+ * The dark palette lives on :root so it applies before [data-theme] is set,
+ * preventing a flash of unstyled colors at first paint. Light-theme override
+ * lands when JS sets data-theme="light" on <html>. data-theme="dark" is
+ * recognised explicitly for the "force dark" case (overrides system pref).
+ */
+
+:root,
+[data-theme="dark"] {
+  /* Surfaces */
+  --color-bg: #0d1117;
+  --color-card: #161b22;
+  --color-border: #21262d;
+  --color-border2: #30363d;
+
+  /* Text */
+  --color-text: #e1e4e8;
+  --color-muted: #8b949e;
+  --color-dim: #7d8590;
+
+  /* Accents */
+  --color-blue: #58a6ff;
+  --color-green: #3fb950;
+  --color-red: #f85149;
+  --color-yellow: #d29922;
+  --color-purple: #bc8cff;
+
+  /* Scrollbar (dark) */
+  --scrollbar-thumb: #30363d;
+  --scrollbar-thumb-hover: #484f58;
+}
+
+[data-theme="light"] {
+  /* Light theme is staged here for the next UI batch; keeping the variable
+   * values dark for now so flipping the data-theme attribute without the
+   * rest of the light pass doesn't break readability. The switcher is gated
+   * to dark-only until the light palette is finalised. */
+  --color-bg: #ffffff;
+  --color-card: #f6f8fa;
+  --color-border: #d0d7de;
+  --color-border2: #afb8c1;
+
+  --color-text: #1f2328;
+  --color-muted: #59636e;
+  --color-dim: #818b98;
+
+  --color-blue: #0969da;
+  --color-green: #1a7f37;
+  --color-red: #cf222e;
+  --color-yellow: #9a6700;
+  --color-purple: #8250df;
+
+  --scrollbar-thumb: #afb8c1;
+  --scrollbar-thumb-hover: #59636e;
+}

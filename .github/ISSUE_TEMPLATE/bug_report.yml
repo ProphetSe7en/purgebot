@@ -1,0 +1,66 @@
+name: Bug Report
+description: Report a bug or something that's not working as expected
+labels: ['needs-triage']
+body:
+  - type: checkboxes
+    attributes:
+      label: Existing issue check
+      description: Please search open and closed issues first so we don't end up with duplicates.
+      options:
+        - label: I searched and didn't find an existing issue for this bug
+          required: true
+  - type: textarea
+    attributes:
+      label: What's happening
+      description: Describe what you're seeing.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What should happen instead
+      description: Describe what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: How to reproduce it
+      description: List the steps that lead to the bug.
+      placeholder: |
+        1. Open this page
+        2. Click this button
+        3. See the error
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Your setup
+      description: |
+        Examples:
+          - OS: Unraid 6.12
+          - PurgeBot: 1.4.0
+          - Running in Docker: Yes
+          - Behind a reverse proxy: No
+          - Browser: Firefox 121 (only relevant if it's a UI bug)
+      value: |
+        - OS:
+        - PurgeBot:
+        - Running in Docker:
+        - Behind a reverse proxy:
+        - Browser:
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Logs
+      description: |
+        Open the Web UI Logs tab, reproduce the bug, and paste the relevant lines here. WARN and ERROR entries are most useful; redact any tokens or webhook URLs before pasting. If the bug is auth-related, /config/logs/audit-YYYY-MM-DD.log is the more useful file.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Anything else
+      description: |
+        Screenshots, links, related issues - anything that helps. You can drag-and-drop images directly into this field.
+    validations:
+      required: false

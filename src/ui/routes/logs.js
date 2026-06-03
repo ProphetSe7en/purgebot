@@ -4,7 +4,7 @@ const path = require('path');
 const router = express.Router();
 const bot = require('../../bot');
 
-// GET /api/logs — read log files
+// GET /api/logs - read log files
 router.get('/', (req, res) => {
   try {
     const { date, level, search, limit: rawLimit } = req.query;
@@ -61,7 +61,7 @@ router.get('/', (req, res) => {
   }
 });
 
-// GET /api/logs/stream — SSE endpoint for live logs
+// GET /api/logs/stream - SSE endpoint for live logs
 router.get('/stream', (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -72,7 +72,7 @@ router.get('/stream', (req, res) => {
   // Send initial connection event
   res.write('data: {"type":"connected"}\n\n');
 
-  // Guard writes — disconnected client can throw ERR_STREAM_DESTROYED
+  // Guard writes - disconnected client can throw ERR_STREAM_DESTROYED
   // which propagates synchronously through EventEmitter.emit() into callers
   function safeSend(str) {
     try { if (!res.destroyed) res.write(str); } catch {}

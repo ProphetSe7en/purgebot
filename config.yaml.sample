@@ -1,9 +1,9 @@
-# PurgeBot — Configuration
+# PurgeBot - Configuration
 #
 # Retention hierarchy (first match wins):
-#   1. Inline override on channel  — per-channel retention
-#   2. default                     — category-wide default
-#   3. globalDefault               — fallback for categories without a default
+#   1. Inline override on channel  - per-channel retention
+#   2. default                     - category-wide default
+#   3. globalDefault               - fallback for categories without a default
 #
 # Retention values:
 #   -1   = Never delete (keep all messages forever)
@@ -16,7 +16,7 @@
 #
 # Categories must have "enabled: true" to be cleaned.
 # _channels is auto-populated by --sync. Add ": <days>" to override a channel.
-# Config is re-read before each cleanup run — no restart needed after editing.
+# Config is re-read before each cleanup run - no restart needed after editing.
 # Schedule changes via the Web UI take effect immediately.
 # Timezone is set via the TZ environment variable in Docker.
 #
@@ -52,7 +52,7 @@ webhooks:
   cleanup: ""
 
   # Discord webhook URL for auto-discovery notifications (new channels/categories found)
-  # Sent when scheduled cleanup detects changes on your server — not on first sync
+  # Sent when scheduled cleanup detects changes on your server - not on first sync
   info: ""
 
   # Hex color for cleanup embed sidebar (default: green)
@@ -61,7 +61,7 @@ webhooks:
   # Hex color for info/discovery embed sidebar (default: orange)
   infoColor: "#f39c12"
 
-  # Show the Webhooks tab — lists all Discord webhooks on the server by category/channel.
+  # Show the Webhooks tab - lists all Discord webhooks on the server by category/channel.
   # Requires the bot to have Manage Webhooks permission.
   discovery: false
 
@@ -88,15 +88,15 @@ discord:
 
   # Delay in ms between processing each channel (rate limit protection).
   # Skipped automatically when a channel had nothing to delete.
-  # Discord rate limits are per-request — 500ms is safe. Minimum: 0.
+  # Discord rate limits are per-request - 500ms is safe. Minimum: 0.
   delayBetweenChannels: 500
 
   # Delay in ms between individual deletes for messages older than 14 days.
-  # Discord allows 5 DELETE/sec per channel — 400ms = 2.5/sec (half the limit).
+  # Discord allows 5 DELETE/sec per channel - 400ms = 2.5/sec (half the limit).
   # Do not set below 200ms to avoid rate limiting.
   delayBetweenDeletes: 400
 
-  # Skip pinned messages — pinned messages are never deleted when true
+  # Skip pinned messages - pinned messages are never deleted when true
   skipPinned: true
 
 logging:
@@ -108,5 +108,5 @@ display:
   timeFormat: "24h"
 
 # Run --sync to discover your Discord categories and channels.
-# They will appear here with enabled: false — activate the ones you want cleaned.
+# They will appear here with enabled: false - activate the ones you want cleaned.
 categories: {}

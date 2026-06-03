@@ -1,0 +1,18 @@
+# Owners required to review changes. With branch protection's
+# "Require review from Code Owners" enabled, edits to these paths
+# cannot land without owner sign-off - even on Dependabot PRs.
+
+# Global owner - review required for everything by default.
+* @ProphetSe7en
+
+# Security-core: never auto-merge changes here, always require owner review.
+/src/ui/auth.js          @ProphetSe7en
+/src/ui/csrf.js          @ProphetSe7en
+/src/ui/ratelimit.js     @ProphetSe7en
+/src/ui/audit.js         @ProphetSe7en
+/src/ui/server.js        @ProphetSe7en
+/SECURITY.md             @ProphetSe7en
+/.github/                @ProphetSe7en
+/.gitleaksignore         @ProphetSe7en
+/Dockerfile              @ProphetSe7en
+/entrypoint.sh           @ProphetSe7en

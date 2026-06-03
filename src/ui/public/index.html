@@ -5,93 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PurgeBot</title>
 <link rel="icon" type="image/png" href="/favicon.png">
-<script src="vendor/tailwind.js"></script>
-<script defer src="vendor/alpine-collapse.js"></script>
-<script defer src="vendor/alpine.js"></script>
-<script src="vendor/cronstrue.js"></script>
-<script src="vendor/chart.js"></script>
+<link rel="stylesheet" href="/css/styles.css">
+<!--
+  SRI hashes are computed at Dockerfile build time from the vendored
+  CDN files (offline-capable + version-pinned via the upstream URLs).
+  Browsers refuse to execute a script whose computed hash differs from
+  the integrity= attribute, so a tampered cache or a successful MITM on
+  the build wget step would surface as a script-execution failure
+  rather than silent code substitution. crossorigin is omitted because
+  /vendor/* is served same-origin by Express.
+
+  Re-hash command when bumping a vendored script's version:
+    docker run --rm purgebot:dev node -e 'const fs=require("fs"),h=require("crypto");
+      for (const f of ["alpine.js","alpine-collapse.js","cronstrue.js","chart.js"])
+        console.log(f+": sha384-"+h.createHash("sha384").update(fs.readFileSync("/app/src/ui/public/vendor/"+f)).digest("base64"))'
+-->
+<script defer src="vendor/alpine-collapse.js" integrity="sha384-NArNwzWsUSF+kY2lgW4YriEkjLqi+J+za6HrENUn/3nZqkBnWbxV22kCJEK5Uu6n"></script>
+<script defer src="vendor/alpine.js" integrity="sha384-9Ax3MmS9AClxJyd5/zafcXXjxmwFhZCdsT6HJoJjarvCaAkJlk5QDzjLJm+Wdx5F"></script>
+<script src="vendor/cronstrue.js" integrity="sha384-P12rFDtunG/jm5M9w/IpztJFVcSBQeGLm5JZiezAC2GdDEkG8LckCSVkbwraRKkd"></script>
+<script src="vendor/chart.js" integrity="sha384-T/4KgSWuZEPozpPz7rnnp/5lDSnpY1VPJCojf1S81uTHS1E38qgLfMgVsAeRCWc4"></script>
 <script>
-  tailwind.config = {
-    theme: {
-      extend: {
-        colors: {
-          gh: {
-            bg: '#0d1117', card: '#161b22', border: '#21262d',
-            border2: '#30363d', text: '#e1e4e8', muted: '#8b949e',
-            dim: '#7d8590', blue: '#58a6ff', green: '#3fb950',
-            red: '#f85149', yellow: '#d29922', purple: '#bc8cff',
-          }
-        }
-      }
-    }
-  }
+  // Apply persisted UI Scale + theme before Alpine mounts so first paint
+  // is sized + themed correctly. localStorage-backed (per-browser preference).
+  (function () {
+    var scale = localStorage.getItem('purgebot-ui-scale') || '1';
+    if (scale !== '1' && CSS.supports('zoom', '1')) document.documentElement.style.zoom = scale;
+    var theme = localStorage.getItem('purgebot-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
+  })();
 </script>
-<style>
-  [x-cloak] { display: none !important; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-  .log-mono { font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; }
-  @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-  .pulse-dot { animation: pulse-dot 2s infinite; }
-  input[type="number"]::-webkit-inner-spin-button,
-  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-  input[type="number"] { -moz-appearance: textfield; }
-  ::-webkit-scrollbar { width: 8px; }
-  ::-webkit-scrollbar-track { background: #0d1117; }
-  ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: #484f58; }
-  /* Centered content container */
-  .content-wrap { max-width: 960px; margin: 0 auto; }
-  /* Settings sidebar */
-  .settings-layout { display: flex; gap: 0; min-height: 400px; }
-  .settings-sidebar { width: 170px; flex-shrink: 0; border-right: 1px solid #21262d; padding-top: 8px; }
-  .settings-nav {
-    display: block; padding: 9px 16px; font-size: 13px; color: #8b949e;
-    cursor: pointer; border-left: 3px solid transparent; transition: color 0.15s, background 0.15s;
-  }
-  .settings-nav:hover { color: #e1e4e8; background: rgba(255,255,255,0.02); }
-  .settings-nav-active { color: #e1e4e8; border-left-color: #3fb950; background: rgba(255,255,255,0.03); }
-  .settings-content { flex: 1; padding: 8px 0 0 24px; }
-  /* Retention dropdown */
-  .ret-wrap { position: relative; }
-  .ret-btn {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 2px 8px; border-radius: 4px; font-size: 10px;
-    cursor: pointer; border: 1px solid; white-space: nowrap; transition: all 0.15s;
-    min-width: 68px; justify-content: space-between;
-  }
-  .ret-default { color: #58a6ff; border-color: rgba(88,166,255,0.3); background: rgba(88,166,255,0.08); }
-  .ret-skip { color: #8b949e; border-color: #30363d; background: #21262d; }
-  .ret-custom { color: #bc8cff; border-color: rgba(188,140,255,0.3); background: rgba(188,140,255,0.08); }
-  .ret-arrow { font-size: 8px; opacity: 0.6; }
-  .ret-menu {
-    position: fixed; z-index: 50; min-width: 180px;
-    background: #1c2128; border: 1px solid #30363d;
-    border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  }
-  .ret-opt {
-    display: flex; align-items: center; gap: 8px;
-    padding: 7px 12px; font-size: 12px; cursor: pointer;
-  }
-  .ret-opt:hover { background: rgba(255,255,255,0.05); }
-  .ret-opt-active { background: rgba(88,166,255,0.08); }
-  .ret-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-  .ret-check { color: #58a6ff; font-size: 14px; width: 14px; text-align: center; margin-left: auto; }
-  .ret-custom-row {
-    display: flex; align-items: center; gap: 6px;
-    padding: 7px 12px; border-top: 1px solid #21262d;
-  }
-  .ret-custom-input {
-    width: 50px; padding: 3px 6px; text-align: center;
-    background: #0d1117; border: 1px solid #30363d; border-radius: 4px;
-    color: #e1e4e8; font-size: 12px; outline: none;
-  }
-  .ret-custom-input:focus { border-color: #58a6ff; }
-  .ret-custom-apply {
-    padding: 2px 8px; font-size: 10px; border-radius: 4px;
-    background: #238636; border: none; color: #fff; cursor: pointer; margin-left: auto;
-  }
-  .ret-custom-apply:hover { background: #2ea043; }
-</style>
 </head>
 <body class="bg-gh-bg text-gh-text min-h-screen" x-data="app()" x-init="init()">
 
@@ -129,17 +71,33 @@
     <span x-show="(status.cleanupRunning || cleanupRunning) && cleanupCancelling" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-900/30 text-gh-red border border-red-800">
       <span class="w-2 h-2 rounded-full bg-gh-red pulse-dot"></span> Stopping...
     </span>
+    <!-- Auth state pill: signed-in user + Logout, or LAN-bypass indicator -->
+    <span x-show="authStatus.authenticated" class="inline-flex items-center gap-1.5 rounded-full text-xs font-medium bg-gh-border border border-gh-border2">
+      <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-gh-text">
+        <svg class="w-3.5 h-3.5 text-gh-dim" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span x-text="authStatus.user?.username || 'admin'"></span>
+      </span>
+      <button @click="logout()" class="px-2.5 py-1 text-gh-dim hover:text-gh-red hover:bg-red-900/20 rounded-r-full border-l border-gh-border2 transition">Logout</button>
+    </span>
+    <span x-show="!authStatus.authenticated && authStatus.trustedBypass" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gh-border text-gh-dim border border-gh-border2" title="Your IP is in TRUSTED_NETWORKS - auth is bypassed for LAN access. Visit /setup to create an admin account for external access.">
+      <span class="w-2 h-2 rounded-full bg-gh-dim"></span> LAN bypass
+    </span>
   </div>
 </header>
 
 <!-- Tabs + Action buttons -->
 <nav class="flex items-center gap-0 px-6 bg-gh-bg border-b border-gh-border">
+  <!-- Anchor tags so middle-click / Ctrl+click / right-click "Open in new tab"
+       work natively. @click.left.exact.prevent intercepts the plain left
+       click for SPA navigation; other clicks fall through to the browser. -->
   <template x-for="t in visibleTabs" :key="t.id">
-    <button @click="tab = t.id" class="px-5 py-2.5 text-sm font-medium border-b-2 transition flex items-center gap-1.5"
+    <a :href="t.id === 'config' ? '#settings/' + (configSection || 'cleanup') : '#' + t.id"
+      @click.left.exact.prevent="tab = t.id"
+      class="px-5 py-2.5 text-sm font-medium border-b-2 transition flex items-center gap-1.5 no-underline"
       :class="tab === t.id ? 'text-gh-text border-gh-blue' : 'text-gh-muted border-transparent hover:text-gh-text'">
       <span x-text="t.label"></span>
       <span x-show="t.badge" x-text="t.badge" class="bg-gh-border2 text-gh-muted text-[10px] px-1.5 py-0.5 rounded-full"></span>
-    </button>
+    </a>
   </template>
 </nav>
 
@@ -168,18 +126,53 @@
     </div>
     <div class="bg-gh-card border border-gh-border rounded-lg p-4">
       <div class="text-[11px] text-gh-muted uppercase tracking-wider">Last Run Deleted</div>
-      <div class="text-3xl font-semibold text-gh-green mt-1" x-text="stats.lastLiveRun ? stats.lastLiveRun.totalPurged.toLocaleString() : '—'"></div>
+      <div class="text-3xl font-semibold text-gh-green mt-1" x-text="stats.lastLiveRun ? stats.lastLiveRun.totalPurged.toLocaleString() : '-'"></div>
       <div class="text-[11px] text-gh-dim mt-0.5" x-text="stats.lastLiveRun ? 'Live run · ' + formatDuration(stats.lastLiveRun.duration) : 'No live runs yet'"></div>
     </div>
     <div class="bg-gh-card border border-gh-border rounded-lg p-4">
       <div class="text-[11px] text-gh-muted uppercase tracking-wider">Errors</div>
-      <div class="text-3xl font-semibold mt-1" :class="(stats.lastLiveRun?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-green'" x-text="stats.lastLiveRun ? stats.lastLiveRun.totalErrors : '—'"></div>
+      <div class="text-3xl font-semibold mt-1" :class="(stats.lastLiveRun?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-green'" x-text="stats.lastLiveRun ? stats.lastLiveRun.totalErrors : '-'"></div>
       <div class="text-[11px] text-gh-dim mt-0.5" x-text="stats.lastLiveRun ? 'Last live run' : 'No live runs yet'"></div>
     </div>
     <div class="bg-gh-card border border-gh-border rounded-lg p-4">
       <div class="text-[11px] text-gh-muted uppercase tracking-wider">Next Cleanup</div>
       <div class="text-xl font-semibold text-gh-yellow mt-1" x-text="nextRunDisplay"></div>
       <div class="text-[11px] text-gh-dim mt-0.5" x-text="status.schedule + ' (' + status.timezone + ')'"></div>
+    </div>
+  </div>
+
+  <!-- Global rules (opt-in via Settings -> Cleanup -> Message Rules) -->
+  <div x-show="editConfig.discord.rulesUiEnabled" class="bg-gh-card border border-gh-border rounded-lg p-4 mb-5">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="text-sm font-semibold text-gh-text">Global rules
+        <span class="text-xs text-gh-dim font-normal" x-text="(editConfig.rules || []).length > 0 ? '· ' + (editConfig.rules || []).length : '· none yet'"></span>
+      </h3>
+      <button @click="openNewRuleModal('global', '')"
+        class="text-[11px] px-2 py-1 rounded bg-blue-700 text-white hover:bg-blue-600 transition">+ Add rule</button>
+    </div>
+    <p class="text-xs text-gh-dim leading-relaxed mb-3">
+      <b class="text-gh-muted">Rules keep or delete specific messages on top of the age-based cleanup.</b>
+      A rule fires when its conditions match a message; keep wins over delete. The most specific level decides:
+      a rule on a channel beats one on its category, which beats a global rule.
+      Most users only need age-based cleanup. Rules are for the cases age alone can't express
+      (for example: keep messages from a moderator, delete bot messages in one category, never touch pinned in channel X).
+    </p>
+    <div class="space-y-1" x-show="(editConfig.rules || []).length > 0">
+      <template x-for="(rule, idx) in (editConfig.rules || [])" :key="'g-rule-' + idx">
+        <div class="flex items-center gap-2 py-1.5 px-2 bg-gh-bg/40 rounded border border-gh-border text-xs">
+          <span class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+            :class="rule.action === 'keep' ? 'bg-green-900/40 text-gh-green' : 'bg-red-900/40 text-gh-red'"
+            x-text="rule.action === 'keep' ? 'Keep' : 'Delete'"></span>
+          <span class="text-gh-text truncate" x-text="describeRule(rule)"></span>
+          <span class="text-gh-dim ml-auto whitespace-nowrap shrink-0" x-text="ruleScopeSummary(rule, 'global')"></span>
+          <button @click.stop="openRunRuleModal('global', '', idx)" title="Run only this rule (no retention, no other rules)"
+            class="text-gh-dim hover:text-gh-blue shrink-0 px-1">▶</button>
+          <button @click.stop="openEditRuleModal('global', '', idx)" title="Edit this rule"
+            class="text-gh-dim hover:text-gh-text shrink-0 px-1">✎</button>
+          <button @click.stop="removeRule('global', '', idx)" title="Remove this rule"
+            class="text-gh-dim hover:text-gh-red shrink-0 px-1 leading-none text-base">×</button>
+        </div>
+      </template>
     </div>
   </div>
 
@@ -198,7 +191,7 @@
     </div>
     <template x-if="editConfig.sortEnabled">
       <div class="flex items-center gap-3 mb-2">
-        <span class="text-xs text-gh-muted w-24 shrink-0">Sort <span class="text-gh-dim" x-text="'· ' + Object.entries(editConfig.sortInclude || {}).filter(([,v]) => v).length + '/' + Object.keys(editConfig.categories || {}).length"></span></span>
+        <span class="text-xs text-gh-muted w-24 shrink-0">Sort <span class="text-gh-dim" x-text="'· ' + Object.entries(editConfig.sortInclude || {}).filter(([k,v]) => v && editConfig.categories?.[k]).length + '/' + Object.keys(editConfig.categories || {}).length"></span></span>
         <button @click="Object.keys(editConfig.categories || {}).forEach(n => { if (!editConfig.sortInclude) editConfig.sortInclude = {}; editConfig.sortInclude[n] = true; }); configDirty = true"
           class="text-[10px] px-2 py-0.5 rounded border border-gh-border2 bg-gh-border text-gh-text hover:text-gh-purple hover:border-purple-800 transition" style="min-width:62px">Enable All</button>
         <button @click="editConfig.sortInclude = {}; configDirty = true"
@@ -253,24 +246,30 @@
       <div class="bg-gh-card border border-gh-border rounded-lg mb-1.5">
         <!-- Category header (grid row) -->
         <div @click="toggleCategory(catName)" class="grid items-center px-4 py-2.5 cursor-pointer hover:bg-gh-bg/50 transition"
-          :style="editConfig.sortEnabled ? 'grid-template-columns:1fr 58px 65px 58px 48px 42px 20px' : 'grid-template-columns:1fr 58px 65px 58px 20px'">
+          :style="'grid-template-columns:1fr 58px 65px' + (editConfig.discord.rulesUiEnabled ? ' 42px' : '') + ' 58px' + (editConfig.sortEnabled ? ' 48px 42px' : '') + ' 20px'">
           <div class="flex items-center gap-2 overflow-hidden">
             <span class="w-2 h-2 rounded-full shrink-0" :class="cat.enabled ? 'bg-gh-green' : 'bg-gh-dim'"></span>
             <span class="text-sm font-medium truncate" x-text="catName"></span>
             <span class="text-xs text-gh-dim shrink-0" x-text="(cat._channels || []).length + ' ch'"></span>
           </div>
           <span class="text-center text-xs"
-            :class="!cat.enabled ? 'text-gh-dim' : (retentionEffect(cat.default ?? editConfig.globalDefault, cat.deleteOld) === '—' ? 'text-gh-yellow' : 'text-gh-muted')"
-            x-text="cat.enabled ? retentionEffect(cat.default ?? editConfig.globalDefault, cat.deleteOld) : '—'"
-            :title="!cat.enabled ? 'Cleanup disabled' : (retentionEffect(cat.default ?? editConfig.globalDefault, cat.deleteOld) === '—' ? 'Retention >14d but Delete Old is off — nothing will be deleted' : '')"></span>
-          <span class="text-center text-xs" :class="countOverrides(cat) > 0 ? 'text-purple-400' : 'text-gh-dim'" x-text="countOverrides(cat) || '—'"></span>
+            :class="!cat.enabled ? 'text-gh-dim' : (retentionEffect(cat.default ?? editConfig.globalDefault, cat.deleteOld) === '-' ? 'text-gh-yellow' : 'text-gh-muted')"
+            x-text="cat.enabled ? retentionEffect(cat.default ?? editConfig.globalDefault, cat.deleteOld) : '-'"
+            :title="!cat.enabled ? 'Cleanup disabled' : (retentionEffect(cat.default ?? editConfig.globalDefault, cat.deleteOld) === '-' ? 'Retention >14d but Delete Old is off - retention will not touch >14d messages here. Rules still run on >14d messages regardless of this toggle.' : '')"></span>
+          <span class="text-center text-xs" :class="countOverrides(cat) > 0 ? 'text-purple-400' : 'text-gh-dim'" x-text="countOverrides(cat) || '-'"></span>
+          <template x-if="editConfig.discord.rulesUiEnabled">
+            <span class="text-center text-xs"
+              :class="(cat.rules || []).length > 0 ? 'text-gh-text' : 'text-gh-dim'"
+              :title="(cat.rules || []).length > 0 ? (cat.rules || []).length + ' rule(s) on this category' : 'No rules on this category'"
+              x-text="(cat.rules || []).length || '-'"></span>
+          </template>
           <span class="text-center"><span class="text-[10px] px-1.5 py-0.5 rounded" :class="cat.enabled ? 'bg-green-900/30 text-gh-green' : 'bg-gh-border text-gh-dim'" x-text="cat.enabled ? 'on' : 'off'"></span></span>
           <template x-if="editConfig.sortEnabled">
             <span class="text-center"><span class="text-[10px] px-1.5 py-0.5 rounded" :class="editConfig.sortInclude?.[catName] ? 'bg-purple-900/30 text-purple-400' : 'bg-gh-border text-gh-dim'" x-text="editConfig.sortInclude?.[catName] ? 'on' : 'off'"></span></span>
           </template>
           <template x-if="editConfig.sortEnabled">
             <span class="text-center text-[10px]" :class="editConfig.sortPinned?.[catName] != null ? 'text-purple-400' : 'text-gh-dim'"
-              x-text="editConfig.sortPinned?.[catName] === 0 ? '1st' : (editConfig.sortPinned?.[catName] === -1 ? 'last' : (editConfig.sortPinned?.[catName] > 0 ? '#'+(editConfig.sortPinned[catName]+1) : '—'))"></span>
+              x-text="editConfig.sortPinned?.[catName] === 0 ? '1st' : (editConfig.sortPinned?.[catName] === -1 ? 'last' : (editConfig.sortPinned?.[catName] > 0 ? '#'+(editConfig.sortPinned[catName]+1) : '-'))"></span>
           </template>
           <svg class="w-3.5 h-3.5 text-gh-dim transition-transform justify-self-center" :class="openCategories.includes(catName) && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
         </div>
@@ -292,7 +291,7 @@
               <input type="number" :value="cat.default ?? ''" @input="setCategoryDefault(catName, $event.target.value)" class="px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs w-14 text-center focus:border-gh-blue outline-none" min="-1" placeholder="global">
               <span class="text-xs text-gh-dim">days</span>
             </div>
-            <div class="flex items-center gap-2" title="Also delete messages older than 14 days (slower, one at a time). Without this, only messages under 14 days old are deleted.">
+            <div class="flex items-center gap-2" title="Controls only retention-based (age) cleanup of messages older than 14 days. When off, retention won't touch >14d messages (faster, bulk-only). Rule-matched messages are always deleted regardless of this toggle - if a rule says delete, it deletes, even on >14d messages.">
               <span class="text-xs text-gh-muted">Delete old (&gt;14d):</span>
               <button @click="if (cat.deleteOld === false) { delete cat.deleteOld; } else { cat.deleteOld = false; } configDirty = true"
                 class="w-8 h-4 rounded-full relative transition-colors"
@@ -319,10 +318,38 @@
                   :value="editConfig.sortPinned?.[catName] ?? ''"
                   @input="if (!editConfig.sortPinned) editConfig.sortPinned = {}; const v = $event.target.value; if (v === '') { delete editConfig.sortPinned[catName]; } else { editConfig.sortPinned[catName] = parseInt(v); } configDirty = true"
                   class="px-2 py-0.5 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs w-12 text-center focus:border-gh-blue outline-none"
-                  placeholder="—">
+                  placeholder="-">
                 <span class="text-xs text-gh-dim" x-text="editConfig.sortPinned?.[catName] === 0 ? 'first' : (editConfig.sortPinned?.[catName] === -1 ? 'last' : '')"></span>
               </div>
             </template>
+          </div>
+          <!-- Rules section (opt-in via Settings -> Cleanup -> Message Rules) -->
+          <div x-show="editConfig.discord.rulesUiEnabled" class="border-b border-gh-border py-2">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-gh-muted">Rules
+                <span x-show="(cat.rules || []).length > 0" class="text-gh-dim font-normal" x-text="'· ' + (cat.rules || []).length"></span>
+                <span x-show="(cat.rules || []).length === 0" class="text-gh-dim font-normal">· none yet</span>
+              </span>
+              <button @click.stop="openNewRuleModal('category', catName)"
+                class="text-[10px] px-2 py-0.5 rounded bg-blue-700 text-white hover:bg-blue-600 transition">+ Add rule</button>
+            </div>
+            <div class="space-y-1 mt-2" x-show="(cat.rules || []).length > 0">
+              <template x-for="(rule, idx) in (cat.rules || [])" :key="catName + '-rule-' + idx">
+                <div class="flex items-center gap-2 py-1.5 px-2 bg-gh-bg/40 rounded border border-gh-border text-xs">
+                  <span class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+                    :class="rule.action === 'keep' ? 'bg-green-900/40 text-gh-green' : 'bg-red-900/40 text-gh-red'"
+                    x-text="rule.action === 'keep' ? 'Keep' : 'Delete'"></span>
+                  <span class="text-gh-text truncate" x-text="describeRule(rule)"></span>
+                  <span class="text-gh-dim ml-auto whitespace-nowrap shrink-0" x-text="ruleScopeSummary(rule, 'category')"></span>
+                  <button @click.stop="openRunRuleModal('category', catName, idx)" title="Run only this rule (no retention, no other rules)"
+                    class="text-gh-dim hover:text-gh-blue shrink-0 px-1">▶</button>
+                  <button @click.stop="openEditRuleModal('category', catName, idx)" title="Edit this rule"
+                    class="text-gh-dim hover:text-gh-text shrink-0 px-1">✎</button>
+                  <button @click.stop="removeRule('category', catName, idx)" title="Remove this rule"
+                    class="text-gh-dim hover:text-gh-red shrink-0 px-1 leading-none text-base">×</button>
+                </div>
+              </template>
+            </div>
           </div>
           <!-- Channel list -->
           <template x-for="(ch, idx) in (cat._channels || [])" :key="catName + '-' + idx">
@@ -373,7 +400,7 @@
               </div>
             </div>
           </template>
-          <div x-show="!cat._channels || cat._channels.length === 0" class="text-xs text-gh-dim py-2">No channels — run Sync first</div>
+          <div x-show="!cat._channels || cat._channels.length === 0" class="text-xs text-gh-dim py-2">No channels - run Sync first</div>
           <!-- Running indicator -->
           <div x-show="categoryRunning[catName]" class="mt-3 pt-3 border-t border-gh-border text-xs text-gh-blue flex items-center gap-2">
             <span class="w-2 h-2 rounded-full bg-gh-blue pulse-dot"></span> Running...
@@ -383,6 +410,7 @@
             <div class="mt-3 pt-3 border-t border-gh-border">
               <div class="flex flex-wrap gap-4 mb-2 text-xs">
                 <span class="text-gh-muted">Channels: <strong class="text-gh-blue" x-text="categoryResults[catName].processed"></strong></span>
+                <span x-show="categoryResults[catName].scanned > 0" class="text-gh-muted">Scanned: <strong class="text-gh-blue" x-text="(categoryResults[catName].scanned || 0).toLocaleString()"></strong></span>
                 <span class="text-gh-muted"><span x-text="categoryResults[catName].dryRun ? 'Would delete' : 'Deleted'"></span>: <strong class="text-gh-red" x-text="categoryResults[catName].purged"></strong></span>
                 <span class="text-gh-muted">Errors: <strong :class="categoryResults[catName].errors > 0 ? 'text-gh-red' : 'text-gh-green'" x-text="categoryResults[catName].errors"></strong></span>
                 <span x-show="categoryResults[catName].dryRun" class="text-[10px] text-gh-yellow bg-yellow-900/30 px-1.5 py-0.5 rounded border border-yellow-800">dry-run</span>
@@ -440,7 +468,7 @@
           <div x-show="topChannels.length === 0" class="text-sm text-gh-dim">No messages deleted</div>
         </div>
       </template>
-      <div x-show="!stats.lastRun" class="text-sm text-gh-dim">No stats yet — run a cleanup first</div>
+      <div x-show="!stats.lastRun" class="text-sm text-gh-dim">No stats yet - run a cleanup first</div>
     </div>
 
     <!-- Run history -->
@@ -484,11 +512,13 @@
   <div class="settings-layout">
     <!-- Sidebar -->
     <div class="settings-sidebar">
-      <div class="settings-nav" :class="configSection==='cleanup' && 'settings-nav-active'" @click="configSection='cleanup'">Cleanup</div>
-      <div class="settings-nav" :class="configSection==='notifications' && 'settings-nav-active'" @click="configSection='notifications'">Notifications</div>
-      <div class="settings-nav" :class="configSection==='schedule' && 'settings-nav-active'" @click="configSection='schedule'">Schedule</div>
-      <div class="settings-nav" :class="configSection==='tools' && 'settings-nav-active'" @click="configSection='tools'">Discord Tools</div>
-      <div class="settings-nav" :class="configSection==='general' && 'settings-nav-active'" @click="configSection='general'">General</div>
+      <a href="#settings/cleanup" class="settings-nav no-underline block" :class="configSection==='cleanup' && 'settings-nav-active'" @click.left.exact.prevent="configSection='cleanup'">Cleanup</a>
+      <a href="#settings/notifications" class="settings-nav no-underline block" :class="configSection==='notifications' && 'settings-nav-active'" @click.left.exact.prevent="configSection='notifications'">Notifications</a>
+      <a href="#settings/schedule" class="settings-nav no-underline block" :class="configSection==='schedule' && 'settings-nav-active'" @click.left.exact.prevent="configSection='schedule'">Schedule</a>
+      <a href="#settings/tools" class="settings-nav no-underline block" :class="configSection==='tools' && 'settings-nav-active'" @click.left.exact.prevent="configSection='tools'">Discord Tools</a>
+      <a href="#settings/display" class="settings-nav no-underline block" :class="configSection==='display' && 'settings-nav-active'" @click.left.exact.prevent="configSection='display'">Display</a>
+      <a href="#settings/general" class="settings-nav no-underline block" :class="configSection==='general' && 'settings-nav-active'" @click.left.exact.prevent="configSection='general'">General</a>
+      <a href="#settings/security" class="settings-nav no-underline block" :class="configSection==='security' && 'settings-nav-active'" @click.left.exact.prevent="configSection='security'; loadApiKey()">Security</a>
     </div>
     <div class="settings-content">
 
@@ -517,13 +547,28 @@
             <span class="text-xs text-gh-dim">days</span>
           </div>
         </div>
-        <div class="flex items-center gap-4 py-3">
-          <div class="w-64 shrink-0"><div class="text-sm">Skip Pinned Messages</div><div class="text-xs text-gh-dim">Never delete pinned messages</div></div>
+        <div class="flex items-start gap-4 py-3">
+          <div class="w-64 shrink-0">
+            <div class="text-sm">Skip Pinned Messages</div>
+            <div class="text-xs text-gh-dim">Never delete pinned messages by age. Rules below can override this per channel or category if message rules are enabled.</div>
+          </div>
           <button @click="editConfig.discord.skipPinned = !editConfig.discord.skipPinned; configDirty = true"
-            class="w-10 h-5 rounded-full relative transition-colors shrink-0"
+            class="w-10 h-5 rounded-full relative transition-colors shrink-0 mt-0.5"
             :class="editConfig.discord.skipPinned ? 'bg-blue-600' : 'bg-gh-border2'">
             <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
               :class="editConfig.discord.skipPinned ? 'left-5' : 'left-0.5'"></span>
+          </button>
+        </div>
+        <div class="flex items-start gap-4 py-3">
+          <div class="w-64 shrink-0">
+            <div class="text-sm">Message Rules <span class="text-[10px] text-gh-dim font-normal">advanced</span></div>
+            <div class="text-xs text-gh-dim">Optional rule engine for keeping or deleting specific messages by content, sender, URL, or other conditions, on top of the age-based cleanup. Most users don't need this. If your config has rules saved, they still run when this is off; this toggle only hides the editor UI.</div>
+          </div>
+          <button @click="editConfig.discord.rulesUiEnabled = !editConfig.discord.rulesUiEnabled; configDirty = true"
+            class="w-10 h-5 rounded-full relative transition-colors shrink-0 mt-0.5"
+            :class="editConfig.discord.rulesUiEnabled ? 'bg-blue-600' : 'bg-gh-border2'">
+            <span class="absolute w-4 h-4 bg-white rounded-full top-0.5 transition-all"
+              :class="editConfig.discord.rulesUiEnabled ? 'left-5' : 'left-0.5'"></span>
           </button>
         </div>
         <div class="flex items-center gap-4 py-3">
@@ -561,8 +606,8 @@
         <button @click="settingsExpand.discord = !settingsExpand.discord" class="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition cursor-pointer">
           <div class="flex items-center gap-2">
             <h3 class="text-sm font-semibold text-gh-text">Discord</h3>
-            <span class="text-xs" :class="(editConfig.webhooks?.cleanup || editConfig.webhooks?.info) ? 'text-gh-green' : 'text-gh-dim'"
-              x-text="(editConfig.webhooks?.cleanup || editConfig.webhooks?.info) ? 'Enabled' : 'Disabled'"></span>
+            <span class="text-xs" :class="(editConfig.webhooks?.cleanup || editConfig.webhooks?.info || credentialSaved['webhooks.cleanup'] || credentialSaved['webhooks.info']) ? 'text-gh-green' : 'text-gh-dim'"
+              x-text="(editConfig.webhooks?.cleanup || editConfig.webhooks?.info || credentialSaved['webhooks.cleanup'] || credentialSaved['webhooks.info']) ? 'Enabled' : 'Disabled'"></span>
           </div>
           <svg class="w-4 h-4 text-gh-dim transition-transform duration-200" :class="settingsExpand.discord && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
         </button>
@@ -571,12 +616,18 @@
             <div class="py-3">
               <div class="flex items-center gap-4 mb-2">
                 <div class="w-48 shrink-0"><div class="text-sm">Cleanup Webhook</div><div class="text-xs text-gh-dim">Summary embeds after each run</div></div>
-                <button @click="testWebhook('cleanup')" :disabled="!editConfig.webhooks?.cleanup || webhookTesting === 'cleanup'"
+                <button @click="testWebhook('cleanup')" :disabled="(!editConfig.webhooks?.cleanup && !credentialSaved['webhooks.cleanup']) || webhookTesting === 'cleanup'"
                   class="shrink-0 px-3 py-1.5 rounded-md border bg-gh-border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
                   :class="webhookTesting === 'cleanup' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-text hover:border-gh-blue'"
                   x-text="webhookTesting === 'cleanup' ? 'Sending...' : 'Test'"></button>
               </div>
-              <input x-model="editConfig.webhooks.cleanup" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
+              <input x-model="editConfig.webhooks.cleanup" @input="configDirty = true"
+                :placeholder="credentialSaved['webhooks.cleanup'] ? 'Saved webhook URL (hidden) - type to replace' : 'https://discord.com/api/webhooks/...'"
+                autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
+              <div x-show="credentialSaved['webhooks.cleanup'] && !editConfig.webhooks?.cleanup" class="mt-1.5 flex items-center gap-2 text-xs">
+                <span class="text-gh-dim">Webhook URL is saved.</span>
+                <button @click="clearSavedCredential('webhooks', 'cleanup')" type="button" class="text-red-400 hover:text-red-300 underline">Remove saved URL</button>
+              </div>
               <div class="flex items-center gap-2 mt-2">
                 <span class="text-xs text-gh-dim">Embed color</span>
                 <span class="w-5 h-5 rounded border border-gh-border2 shrink-0" :style="'background:' + (editConfig.webhooks?.cleanupColor || '#238636')"></span>
@@ -586,12 +637,18 @@
             <div class="py-3">
               <div class="flex items-center gap-4 mb-2">
                 <div class="w-48 shrink-0"><div class="text-sm">Info Webhook</div><div class="text-xs text-gh-dim">Discovery notifications (new channels)</div></div>
-                <button @click="testWebhook('info')" :disabled="!editConfig.webhooks?.info || webhookTesting === 'info'"
+                <button @click="testWebhook('info')" :disabled="(!editConfig.webhooks?.info && !credentialSaved['webhooks.info']) || webhookTesting === 'info'"
                   class="shrink-0 px-3 py-1.5 rounded-md border bg-gh-border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
                   :class="webhookTesting === 'info' ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-text hover:border-gh-blue'"
                   x-text="webhookTesting === 'info' ? 'Sending...' : 'Test'"></button>
               </div>
-              <input x-model="editConfig.webhooks.info" @input="configDirty = true" placeholder="https://discord.com/api/webhooks/..." autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
+              <input x-model="editConfig.webhooks.info" @input="configDirty = true"
+                :placeholder="credentialSaved['webhooks.info'] ? 'Saved webhook URL (hidden) - type to replace' : 'https://discord.com/api/webhooks/...'"
+                autocomplete="one-time-code" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
+              <div x-show="credentialSaved['webhooks.info'] && !editConfig.webhooks?.info" class="mt-1.5 flex items-center gap-2 text-xs">
+                <span class="text-gh-dim">Webhook URL is saved.</span>
+                <button @click="clearSavedCredential('webhooks', 'info')" type="button" class="text-red-400 hover:text-red-300 underline">Remove saved URL</button>
+              </div>
               <div class="flex items-center gap-2 mt-2">
                 <span class="text-xs text-gh-dim">Embed color</span>
                 <span class="w-5 h-5 rounded border border-gh-border2 shrink-0" :style="'background:' + (editConfig.webhooks?.infoColor || '#f39c12')"></span>
@@ -628,7 +685,7 @@
                 <div class="py-3">
                   <div class="flex items-center gap-4 mb-2">
                     <div class="w-48 shrink-0"><div class="text-sm">Server URL</div></div>
-                    <button @click="testGotify()" :disabled="!editConfig.gotify?.url || !editConfig.gotify?.token || gotifyTesting"
+                    <button @click="testGotify()" :disabled="!editConfig.gotify?.url || (!editConfig.gotify?.token && !credentialSaved['gotify.token']) || gotifyTesting"
                       class="shrink-0 px-3 py-1.5 rounded-md border bg-gh-border text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
                       :class="gotifyTesting ? 'border-gh-border2 text-gh-dim' : 'border-gh-border2 text-gh-text hover:border-gh-blue'"
                       x-text="gotifyTesting ? 'Sending...' : 'Test'"></button>
@@ -637,7 +694,14 @@
                 </div>
                 <div class="py-3">
                   <div class="w-48 shrink-0 mb-2"><div class="text-sm">App Token</div></div>
-                  <input x-model="editConfig.gotify.token" @input="configDirty = true" type="password" autocomplete="one-time-code" placeholder="Gotify app token" class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
+                  <input x-model="editConfig.gotify.token" @input="configDirty = true" type="password"
+                    autocomplete="one-time-code"
+                    :placeholder="credentialSaved['gotify.token'] ? 'Saved token (hidden) - type to replace' : 'Gotify app token'"
+                    class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-sm font-mono focus:border-gh-blue outline-none">
+                  <div x-show="credentialSaved['gotify.token'] && !editConfig.gotify?.token" class="mt-1.5 flex items-center gap-2 text-xs">
+                    <span class="text-gh-dim">Token is saved.</span>
+                    <button @click="clearSavedCredential('gotify', 'token')" type="button" class="text-red-400 hover:text-red-300 underline">Remove saved token</button>
+                  </div>
                 </div>
                 <div class="py-3">
                   <div class="text-sm mb-2">Priority Levels</div>
@@ -695,7 +759,7 @@
             <button @click="checkPerms()" :disabled="permChecking"
               class="text-xs px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-border text-gh-text hover:border-gh-blue transition disabled:opacity-50"
               x-text="permChecking ? 'Checking...' : 'Check Permissions'"></button>
-            <span x-show="permCheck?.isAdmin" class="text-xs text-gh-green">Administrator — all features available</span>
+            <span x-show="permCheck?.isAdmin" class="text-xs text-gh-green">Administrator - all features available</span>
           </div>
           <template x-if="permCheck && !permCheck.isAdmin">
             <div>
@@ -714,7 +778,7 @@
                   <div class="flex items-center gap-2 text-xs py-0.5">
                     <span class="w-2 h-2 rounded-full shrink-0" :class="ok ? 'bg-gh-green' : 'bg-gh-red'"></span>
                     <span :class="ok ? 'text-gh-text' : 'text-gh-red'" x-text="name === 'purgeAll' ? 'Purge All' : name === 'webhookDiscovery' ? 'Webhook Discovery' : name.charAt(0).toUpperCase() + name.slice(1)"></span>
-                    <span x-show="!ok" class="text-gh-dim">— missing permissions</span>
+                    <span x-show="!ok" class="text-gh-dim">- missing permissions</span>
                   </div>
                 </template>
               </div>
@@ -800,10 +864,33 @@
     </div><!-- end tools section -->
 
     <!-- ===== GENERAL SECTION ===== -->
-    <div x-show="configSection==='general'">
-      <h2 class="text-lg font-semibold text-gh-text mb-1">General</h2>
-      <p class="text-sm text-gh-muted mb-4">UI preferences and log retention.</p>
+    <!-- ===== DISPLAY SECTION ===== -->
+    <div x-show="configSection==='display'">
+      <h2 class="text-lg font-semibold text-gh-text mb-1">Display</h2>
+      <p class="text-sm text-gh-muted mb-4">How the UI renders. Stored per-browser via localStorage, not on the server, so each browser/device sets its own.</p>
       <div class="space-y-0 divide-y divide-gh-border">
+        <div class="flex items-center gap-4 py-3">
+          <div class="w-48 shrink-0">
+            <div class="text-sm">UI Scale</div>
+            <div class="text-xs text-gh-dim">Inflates the whole UI uniformly.</div>
+          </div>
+          <div class="flex items-center gap-4 flex-wrap">
+            <template x-for="opt in [{label:'Compact',value:'1'},{label:'Default',value:'1.1'},{label:'Large',value:'1.2'}]" :key="opt.value">
+              <label class="flex items-center gap-1.5 cursor-pointer text-sm">
+                <input type="radio" name="uiScale" :value="opt.value" :checked="uiScale === opt.value" @change="setUIScale(opt.value)" class="accent-blue-500">
+                <span x-text="opt.label" :class="uiScale === opt.value ? 'text-gh-text' : 'text-gh-dim'"></span>
+              </label>
+            </template>
+            <span class="text-xs text-gh-dim" x-text="uiScale === '1' ? '(default)' : Math.round(parseFloat(uiScale) * 100) + '%'"></span>
+          </div>
+        </div>
+        <div class="flex items-center gap-4 py-3">
+          <div class="w-48 shrink-0">
+            <div class="text-sm">Theme</div>
+            <div class="text-xs text-gh-dim">Light theme arrives in a later release.</div>
+          </div>
+          <div class="text-sm text-gh-dim">Dark only for now.</div>
+        </div>
         <div class="flex items-center gap-4 py-3">
           <div class="w-48 shrink-0"><div class="text-sm">Time Format</div><div class="text-xs text-gh-dim">How timestamps are displayed</div></div>
           <select x-model="editConfig.display.timeFormat" @change="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm focus:border-gh-blue outline-none">
@@ -811,8 +898,16 @@
             <option value="12h">12-hour (2:30 PM)</option>
           </select>
         </div>
+      </div>
+    </div><!-- end display section -->
+
+    <!-- ===== GENERAL SECTION ===== -->
+    <div x-show="configSection==='general'">
+      <h2 class="text-lg font-semibold text-gh-text mb-1">General</h2>
+      <p class="text-sm text-gh-muted mb-4">Log retention and other system settings.</p>
+      <div class="space-y-0 divide-y divide-gh-border">
         <div class="flex items-center gap-4 py-3">
-          <div class="w-48 shrink-0"><div class="text-sm">Log Retention</div><div class="text-xs text-gh-dim">Days to keep log files</div></div>
+          <div class="w-48 shrink-0"><div class="text-sm">Log Retention</div><div class="text-xs text-gh-dim">Days to keep runtime + audit log files</div></div>
           <div class="flex items-center gap-2">
             <input type="number" x-model.number="editConfig.logging.maxDays" @input="configDirty = true" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm w-20 text-right focus:border-gh-blue outline-none" min="1">
             <span class="text-xs text-gh-dim">days</span>
@@ -820,6 +915,61 @@
         </div>
       </div>
     </div><!-- end general section -->
+
+    <!-- ===== SECURITY SECTION ===== -->
+    <div x-show="configSection==='security'">
+      <h2 class="text-lg font-semibold text-gh-text mb-1">Security</h2>
+      <p class="text-sm text-gh-muted mb-4">Account, API key, and authentication posture.</p>
+
+      <!-- Auth posture summary -->
+      <div class="bg-gh-bg border border-gh-border rounded-lg p-4 mb-4">
+        <h3 class="text-sm font-semibold text-gh-text mb-3">Auth posture</h3>
+        <div class="text-xs text-gh-dim space-y-1.5">
+          <div class="flex gap-2"><span class="w-32 shrink-0">Mode</span><span class="text-gh-text font-mono" x-text="authStatus.requirement || '(loading...)'"></span></div>
+          <div class="flex gap-2"><span class="w-32 shrink-0">Account</span><span class="text-gh-text font-mono" x-text="authStatus.user?.username || '(not signed in)'"></span></div>
+          <div class="flex gap-2"><span class="w-32 shrink-0">LAN bypass</span><span class="text-gh-text font-mono" x-text="authStatus.trustedBypass ? 'active for this IP' : 'not applicable'"></span></div>
+          <div class="text-xs text-gh-dim mt-2 pt-2 border-t border-gh-border">Switch between modes by setting <code class="bg-gh-card px-1 rounded">AUTH_REQUIRED</code>, <code class="bg-gh-card px-1 rounded">TRUSTED_NETWORKS</code>, or <code class="bg-gh-card px-1 rounded">TRUSTED_PROXIES</code> in the container env. UI editing of trust lists is planned for a later release.</div>
+        </div>
+      </div>
+
+      <!-- API key -->
+      <div class="bg-gh-bg border border-gh-border rounded-lg p-4 mb-4" x-show="authStatus.authenticated">
+        <h3 class="text-sm font-semibold text-gh-text mb-1">API key</h3>
+        <p class="text-xs text-gh-dim mb-3">For Homepage widgets, scripts, and other headless clients. Send as <code class="bg-gh-card px-1 rounded">X-API-Key</code> header (or <code class="bg-gh-card px-1 rounded">?apiKey=</code> query param).</p>
+        <div class="flex items-center gap-2 mb-3">
+          <input :value="apiKeyVisible ? apiKey : (apiKey ? apiKey.replace(/./g, '•') : '(loading...)')"
+                 readonly
+                 class="flex-1 px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-card text-gh-text text-xs font-mono">
+          <button @click="apiKeyVisible = !apiKeyVisible" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-border text-gh-text text-xs hover:border-gh-blue transition" x-text="apiKeyVisible ? 'Hide' : 'Show'"></button>
+          <button @click="copyApiKey()" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-border text-gh-text text-xs hover:border-gh-blue transition">Copy</button>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="openRotateKeyModal()" class="px-3 py-1.5 rounded-md border border-red-800 bg-red-900/20 text-gh-red text-xs hover:bg-red-900/30 transition">Rotate API key</button>
+          <span class="text-xs text-gh-dim">Old key stops working immediately.</span>
+        </div>
+      </div>
+
+      <!-- Password change -->
+      <div class="bg-gh-bg border border-gh-border rounded-lg p-4" x-show="authStatus.authenticated">
+        <h3 class="text-sm font-semibold text-gh-text mb-1">Password</h3>
+        <p class="text-xs text-gh-dim mb-3">Sign-in password for the Web UI account.</p>
+        <button @click="openChangePasswordModal()" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-border text-gh-text text-xs hover:border-gh-blue transition">Change password</button>
+      </div>
+
+      <!-- Sign-in prompt for trusted-network users -->
+      <div class="bg-gh-bg border border-gh-border rounded-lg p-4" x-show="!authStatus.authenticated && authStatus.hasCreds">
+        <h3 class="text-sm font-semibold text-gh-text mb-1">Sign in required</h3>
+        <p class="text-xs text-gh-dim mb-3">You're using LAN bypass to access the UI. Sign in to view the API key and change your password.</p>
+        <a href="/login" class="inline-block px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-border text-gh-text text-xs hover:border-gh-blue transition">Sign in</a>
+      </div>
+
+      <!-- First-run prompt for trusted-network users -->
+      <div class="bg-gh-bg border border-gh-border rounded-lg p-4" x-show="!authStatus.hasCreds">
+        <h3 class="text-sm font-semibold text-gh-text mb-1">No account set up yet</h3>
+        <p class="text-xs text-gh-dim mb-3">PurgeBot has no admin account. The Web UI is currently only reachable via LAN bypass. Create one to enable login from outside the LAN and to get an API key.</p>
+        <a href="/setup" class="inline-block px-3 py-1.5 rounded-md border border-gh-blue bg-blue-900/30 text-gh-blue text-xs hover:bg-blue-900/50 transition">Create admin account</a>
+      </div>
+    </div><!-- end security section -->
 
     <!-- ===== SCHEDULE SECTION ===== -->
     <div x-show="configSection==='schedule'">
@@ -838,12 +988,12 @@
 
       <div x-show="!editConfig.scheduleEnabled" class="mb-4">
         <div class="text-xs text-gh-yellow bg-yellow-900/20 border border-yellow-800/50 rounded px-3 py-2">
-          Schedule is paused — cleanup only runs manually from the Cleanup tab.
+          Schedule is paused - cleanup only runs manually from the Cleanup tab.
         </div>
       </div>
       <div x-show="editConfig.scheduleEnabled && editConfig.dryRun" class="mb-4">
         <div class="text-xs text-gh-yellow bg-yellow-900/20 border border-yellow-800/50 rounded px-3 py-2">
-          Dry Run is enabled — scheduled runs will only simulate.
+          Dry Run is enabled - scheduled runs will only simulate.
         </div>
       </div>
 
@@ -864,7 +1014,7 @@
     </div><!-- end settings-content -->
   </div><!-- end settings-layout -->
 
-  <!-- Recovery Section — only visible when recovery files exist -->
+  <!-- Recovery Section - only visible when recovery files exist -->
   <div x-show="recoveryFiles.length > 0" class="mt-4 bg-gh-card border border-red-900/60 rounded-lg overflow-hidden">
     <div class="px-5 py-3">
       <h3 class="text-xs font-semibold text-gh-red uppercase tracking-wider">Recovery</h3>
@@ -936,7 +1086,7 @@
 
   <!-- Empty state -->
   <div x-show="!stats.history || stats.history.length === 0" class="text-center py-16">
-    <div class="text-gh-dim text-sm">No cleanup data yet — run a cleanup to see statistics</div>
+    <div class="text-gh-dim text-sm">No cleanup data yet - run a cleanup to see statistics</div>
   </div>
 
   <div x-show="stats.history && stats.history.length > 0">
@@ -949,17 +1099,17 @@
         </div>
         <div class="bg-gh-card border border-gh-border rounded-lg p-4">
           <div class="text-[11px] text-gh-muted uppercase tracking-wider">Avg Per Run</div>
-          <div class="text-2xl font-semibold mt-1 text-gh-text" x-text="stats.lifetime?.totalRuns ? Math.round(stats.lifetime.totalPurged / stats.lifetime.totalRuns).toLocaleString() : '—'"></div>
+          <div class="text-2xl font-semibold mt-1 text-gh-text" x-text="stats.lifetime?.totalRuns ? Math.round(stats.lifetime.totalPurged / stats.lifetime.totalRuns).toLocaleString() : '-'"></div>
           <div class="text-xs text-gh-dim mt-1" x-text="stats.lifetime?.totalRuns ? 'across ' + stats.lifetime.totalRuns + ' runs' : 'no live runs yet'"></div>
         </div>
         <div class="bg-gh-card border border-gh-border rounded-lg p-4">
           <div class="text-[11px] text-gh-muted uppercase tracking-wider">Highest Run</div>
-          <div class="text-2xl font-semibold mt-1 text-gh-text" x-text="statsHighestRun.purged ? statsHighestRun.purged.toLocaleString() : '—'"></div>
+          <div class="text-2xl font-semibold mt-1 text-gh-text" x-text="statsHighestRun.purged ? statsHighestRun.purged.toLocaleString() : '-'"></div>
           <div class="text-xs text-gh-dim mt-1" x-text="statsHighestRun.date || 'no live runs yet'"></div>
         </div>
         <div class="bg-gh-card border border-gh-border rounded-lg p-4">
           <div class="text-[11px] text-gh-muted uppercase tracking-wider">Error Rate</div>
-          <div class="text-2xl font-semibold mt-1" :class="statsErrorRate > 1 ? 'text-gh-red' : 'text-gh-green'" x-text="stats.lifetime?.totalRuns ? statsErrorRate.toFixed(2) : '—'"></div>
+          <div class="text-2xl font-semibold mt-1" :class="statsErrorRate > 1 ? 'text-gh-red' : 'text-gh-green'" x-text="stats.lifetime?.totalRuns ? statsErrorRate.toFixed(2) : '-'"></div>
           <div class="text-xs text-gh-dim mt-1">errors per run</div>
         </div>
       </div>
@@ -1066,6 +1216,7 @@
   <div x-show="cleanupResults" class="bg-gh-card border border-gh-border rounded-lg mb-4 overflow-hidden">
     <div @click="cleanupExpanded = !cleanupExpanded" class="p-4 flex flex-wrap gap-6 cursor-pointer hover:bg-gh-bg/50 transition items-center">
       <div><div class="text-xs text-gh-muted">Channels Scanned</div><div class="text-lg font-semibold text-gh-blue mt-0.5" x-text="cleanupResults?.totalProcessed || 0"></div></div>
+      <div><div class="text-xs text-gh-muted">Messages Scanned</div><div class="text-lg font-semibold text-gh-blue mt-0.5" x-text="(cleanupResults?.totalScanned || 0).toLocaleString()"></div></div>
       <div><div class="text-xs text-gh-muted" x-text="cleanupResults?.dryRun ? 'Would Delete' : 'Deleted'"></div><div class="text-lg font-semibold mt-0.5" :class="cleanupResults?.dryRun ? 'text-gh-blue' : 'text-gh-green'" x-text="cleanupResults?.totalPurged || 0"></div></div>
       <div><div class="text-xs text-gh-muted">Errors</div><div class="text-lg font-semibold mt-0.5" :class="(cleanupResults?.totalErrors || 0) > 0 ? 'text-gh-red' : 'text-gh-muted'" x-text="cleanupResults?.totalErrors || 0"></div></div>
       <div><div class="text-xs text-gh-muted">Duration</div><div class="text-lg font-semibold text-gh-yellow mt-0.5" x-text="formatDuration(cleanupRunning && cleanupElapsed != null ? cleanupElapsed : cleanupResults?.duration)"></div></div>
@@ -1103,8 +1254,47 @@
                     x-text="'(' + formatDuration(ch.rateLimitMs) + ' waiting on Discord)'"></span>
                 </span>
                 <span class="font-semibold"
-                  :class="ch.skipped ? 'text-gh-dim' : (ch.error ? 'text-gh-red' : (ch.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-green'))"
-                  x-text="ch.skipped ? 'skipped (never delete)' : (ch.error ? 'problem' : (ch.purged > 0 ? ch.purged + ' messages' : '0 (all within retention)'))"></span>
+                  :class="ch.skipped ? 'text-gh-dim' : (ch.error ? 'text-gh-red' : (ch.purged > 0 ? (cleanupResults.dryRun ? 'text-gh-blue' : 'text-gh-green') : 'text-gh-muted'))"
+                  x-text="ch.skipped ? 'skipped (never delete)' : (ch.error ? 'problem' : (ch.purged > 0 ? ch.purged + ' messages' : 'nothing to delete'))"></span>
+              </div>
+              <!-- Scan window context: how many were scanned, how far back. Always visible since "0 to delete" is meaningful only with this context. -->
+              <div x-show="!ch.skipped && !ch.error && ch.scannedCount != null" class="mt-0.5 text-[10px] text-gh-dim">
+                <span x-text="'Scanned ' + ch.scannedCount + (ch.scanComplete ? ' (whole channel)' : ' newest messages')"></span><span x-show="ch.oldestScannedAt"> · oldest seen <span x-text="new Date(ch.oldestScannedAt).toLocaleString(undefined, {month:'short', day:'2-digit', hour:'2-digit', minute:'2-digit'})"></span></span><span x-show="!ch.scanComplete" class="text-gh-dim/70"> · bump Max Messages Per Channel in Settings to look further back</span>
+              </div>
+              <!-- Attribution rollup: single text-line summary so the count above is interpretable without a chip-soup. -->
+              <div x-show="ch.purged > 0 && ch.rollup" class="mt-0.5 flex items-center gap-1 text-[10px] text-gh-dim">
+                <span x-show="ch.rollup?.byRule > 0"><span x-text="ch.rollup.byRule"></span> by rule</span>
+                <span x-show="ch.rollup?.byRule > 0 && ch.rollup?.byRetention > 0">·</span>
+                <span x-show="ch.rollup?.byRetention > 0"><span x-text="ch.rollup.byRetention"></span> by retention</span>
+                <span x-show="(ch.rollup?.byRuleWaiting > 0) || (ch.rollup?.byRetentionWaiting > 0)" class="text-gh-dim/70">
+                  · +<span x-text="(ch.rollup?.byRuleWaiting || 0) + (ch.rollup?.byRetentionWaiting || 0)"></span> waiting
+                </span>
+                <button x-show="(ch.attribution || []).length > 0"
+                  @click="(detailsExpanded[catName + '/' + ch.name] = !detailsExpanded[catName + '/' + ch.name])"
+                  class="ml-auto text-gh-blue hover:underline">
+                  <span x-text="detailsExpanded[catName + '/' + ch.name] ? 'Hide details' : 'Show details'"></span>
+                </button>
+              </div>
+              <!-- Collapsible per-message attribution list. Fixed-column grid so the reason column stays aligned right regardless of >14d marker. -->
+              <div x-show="detailsExpanded[catName + '/' + ch.name]" x-collapse class="mt-1.5 ml-3 border-l border-gh-border pl-2">
+                <template x-for="m in (ch.attribution || [])" :key="m.id">
+                  <div class="grid items-baseline gap-2 text-[10px] py-0.5"
+                    style="grid-template-columns: 70px minmax(0, 1fr) auto;">
+                    <span class="text-gh-dim font-mono" x-text="m.ts ? new Date(m.ts).toLocaleString(undefined, {month:'short', day:'2-digit', hour:'2-digit', minute:'2-digit'}) : ''"></span>
+                    <span class="text-gh-muted truncate" :title="m.snippet" x-text="m.snippet || '(no text)'"></span>
+                    <span class="text-gh-dim text-right">
+                      <span x-show="m.reason === 'rule'" :title="'Rule: ' + m.ruleDescription">
+                        <span class="text-purple-300">rule:</span> <span x-text="(m.matchedConditions || []).join(' AND ')"></span><span x-show="m.age === 'old'" class="text-gh-dim/60">, &gt;14d</span>
+                      </span>
+                      <span x-show="m.reason === 'retention'">
+                        <span class="text-gh-yellow">retention:</span> &gt;<span x-text="m.retentionDays"></span>d<span x-show="m.age === 'old'" class="text-gh-dim/60">, slow path</span>
+                      </span>
+                    </span>
+                  </div>
+                </template>
+                <div x-show="ch.attributionTruncated > 0" class="text-[10px] text-gh-dim italic mt-1">
+                  + <span x-text="ch.attributionTruncated"></span> more not shown (showing first 200)
+                </div>
               </div>
               <template x-if="ch.error">
                 <div class="mt-1 flex items-start gap-1 text-[11px] text-gh-red">
@@ -1130,7 +1320,7 @@
 <div x-show="tab === 'sync'" x-cloak class="p-6 content-wrap">
   <div class="bg-gh-card border border-gh-border rounded-lg p-5">
     <h3 class="text-xs font-semibold text-gh-muted uppercase tracking-wider mb-2">Channel Discovery</h3>
-    <p class="text-sm text-gh-muted mb-2">Discover new Discord categories and channels. Existing config and overrides are preserved. New categories inherit the global default retention but are added disabled — enable them manually to include them in cleanup. New channels in already-enabled categories follow the category's default retention.</p>
+    <p class="text-sm text-gh-muted mb-2">Discover new Discord categories and channels. Existing config and overrides are preserved. New categories inherit the global default retention but are added disabled - enable them manually to include them in cleanup. New channels in already-enabled categories follow the category's default retention.</p>
     <p class="text-xs text-gh-dim mb-4">Scheduled cleanup auto-discovers before each run; manual sync is only needed to enable new categories between runs.</p>
     <button @click="syncChannels()" :disabled="status.cleanupRunning || syncRunning || cleanupRunning"
       class="px-4 py-1.5 rounded-md bg-blue-600 text-white text-sm hover:bg-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed">
@@ -1150,7 +1340,7 @@
           <div class="text-lg font-semibold mt-0.5" :class="(syncResults.changes || 0) > 0 ? 'text-gh-green' : 'text-gh-muted'" x-text="syncResults.changes || 0"></div>
         </div>
       </div>
-      <div x-show="(syncResults.changes || 0) === 0" class="mt-3 text-xs text-gh-dim">No changes — config is up to date</div>
+      <div x-show="(syncResults.changes || 0) === 0" class="mt-3 text-xs text-gh-dim">No changes - config is up to date</div>
       <!-- Change details -->
       <template x-if="syncResults.details && syncResults.details.length > 0">
         <div class="mt-4 pt-3 border-t border-gh-border">
@@ -1164,7 +1354,7 @@
                 <span class="text-gh-dim" x-text="detail.scope === 'category' ? ' (category)' : ''"></span>
                 <template x-if="detail.channels && detail.channels.length > 0">
                   <span class="text-gh-muted">
-                    <span x-text="detail.scope === 'category' ? ' — ' : ' '"></span>
+                    <span x-text="detail.scope === 'category' ? ' - ' : ' '"></span>
                     <span x-text="detail.channels.map(c => '#' + c).join(', ')"></span>
                   </span>
                 </template>
@@ -1298,7 +1488,7 @@
             </div>
             <template x-if="purgeAllModal.duplicates">
               <div class="mb-3">
-                <p class="text-xs text-gh-yellow mb-2">Multiple channels share this name — select which one to purge:</p>
+                <p class="text-xs text-gh-yellow mb-2">Multiple channels share this name - select which one to purge:</p>
                 <div class="space-y-1">
                   <template x-for="dup in purgeAllModal.duplicates" :key="dup.id">
                     <label class="flex items-center gap-2 px-2 py-1.5 rounded-md border cursor-pointer transition text-xs"
@@ -1307,7 +1497,7 @@
                       <input type="radio" name="purge-dup" :value="dup.id" x-model="purgeAllModal.channelId" class="accent-red-600">
                       <span><strong x-text="'#' + dup.name"></strong></span>
                       <span class="text-gh-dim font-mono" x-text="dup.id"></span>
-                      <span x-show="dup.topic" class="text-gh-dim truncate max-w-[150px]" x-text="'— ' + dup.topic"></span>
+                      <span x-show="dup.topic" class="text-gh-dim truncate max-w-[150px]" x-text="'- ' + dup.topic"></span>
                     </label>
                   </template>
                 </div>
@@ -1319,13 +1509,13 @@
                 <li>All message history</li>
                 <li>Pinned messages</li>
                 <li>Threads</li>
-                <li>Webhook URLs change — services using the old URLs will stop working</li>
-                <li>Channel ID changes — external references will break</li>
+                <li>Webhook URLs change - services using the old URLs will stop working</li>
+                <li>Channel ID changes - external references will break</li>
               </ul>
             </div>
             <div class="text-xs text-gh-muted mb-3">
               <p class="mb-1">Channel settings, permissions, and webhook names will be recreated. New webhook URLs will be shown after completion.</p>
-              <p class="mt-1 text-gh-dim">Webhook URLs cannot be copied from Discord for bot-created webhooks — copy them from the result dialog or the Webhooks tab.</p>
+              <p class="mt-1 text-gh-dim">Webhook URLs cannot be copied from Discord for bot-created webhooks - copy them from the result dialog or the Webhooks tab.</p>
               <p class="mt-1 text-gh-dim">Note: Purge All does not count toward cleanup statistics. Use regular cleanup for tracked deletions.</p>
             </div>
             <label class="flex items-center gap-2 cursor-pointer">
@@ -1355,7 +1545,7 @@
             <p class="text-sm text-gh-muted mb-3"><strong class="text-gh-text">#<span x-text="purgeAllModal.channel"></span></strong> has been purged and recreated.</p>
             <template x-if="purgeAllModal.webhooks.length > 0">
               <div>
-                <p class="text-xs text-gh-muted mb-2 font-medium">New webhook URLs — copy them here or find them later in the Webhooks tab (enable Discover Webhooks in Settings).</p>
+                <p class="text-xs text-gh-muted mb-2 font-medium">New webhook URLs - copy them here or find them later in the Webhooks tab (enable Discover Webhooks in Settings).</p>
                 <div class="space-y-2">
                   <template x-for="wh in purgeAllModal.webhooks" :key="wh.name">
                     <div class="bg-gh-bg border border-gh-border2 rounded-md px-3 py-2">
@@ -1380,6 +1570,205 @@
           </div>
         </div>
       </template>
+    </div>
+  </div>
+</template>
+
+<!-- Rule editor modal -->
+<template x-if="ruleModal.show">
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @keydown.escape.window="closeRuleModal()">
+    <div class="bg-gh-card border border-gh-border rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-gh-border">
+        <h3 class="text-base font-semibold text-gh-text"
+          x-text="(ruleModal.editIdx === null ? 'New rule' : 'Edit rule') + (ruleModal.scope === 'global' ? ' (global)' : (' in ' + ruleModal.scopeName))"></h3>
+        <button @click="closeRuleModal()" class="text-gh-dim hover:text-gh-text text-xl leading-none">×</button>
+      </div>
+      <div class="border-b border-gh-border px-5 flex gap-1">
+        <button @click="ruleModal.activeTab = 'edit'"
+          :class="ruleModal.activeTab === 'edit' ? 'border-blue-500 text-gh-text' : 'border-transparent text-gh-muted hover:text-gh-text'"
+          class="px-3 py-2 -mb-px border-b-2 text-sm transition">Edit</button>
+        <button @click="ruleModal.activeTab = 'help'"
+          :class="ruleModal.activeTab === 'help' ? 'border-blue-500 text-gh-text' : 'border-transparent text-gh-muted hover:text-gh-text'"
+          class="px-3 py-2 -mb-px border-b-2 text-sm transition">Help</button>
+      </div>
+      <div x-show="ruleModal.activeTab === 'edit'" class="px-5 py-4 space-y-4">
+        <!-- Action -->
+        <div>
+          <label class="text-xs font-medium text-gh-muted block mb-1.5">Action</label>
+          <div class="flex gap-2">
+            <button @click="ruleModal.rule.action = 'keep'"
+              :class="ruleModal.rule.action === 'keep' ? 'bg-green-900/50 border-gh-green text-gh-green' : 'bg-gh-bg border-gh-border2 text-gh-muted hover:text-gh-text'"
+              class="flex-1 px-3 py-2 rounded border text-sm transition">Keep matching messages</button>
+            <button @click="ruleModal.rule.action = 'delete'"
+              :class="ruleModal.rule.action === 'delete' ? 'bg-red-900/50 border-gh-red text-gh-red' : 'bg-gh-bg border-gh-border2 text-gh-muted hover:text-gh-text'"
+              class="flex-1 px-3 py-2 rounded border text-sm transition">Delete matching messages</button>
+          </div>
+        </div>
+        <!-- Conditions -->
+        <div>
+          <label class="text-xs font-medium text-gh-muted block mb-1.5">Conditions
+            <span class="text-gh-dim font-normal" x-show="ruleModal.rule.conditions.length === 1">· what must the message look like?</span>
+            <span class="text-gh-dim font-normal" x-show="ruleModal.rule.conditions.length > 1">· click AND/OR between rows to mix. AND binds first, so "A AND B OR C" means (A AND B) OR C.</span>
+          </label>
+          <div class="space-y-1">
+            <template x-for="(c, idx) in ruleModal.rule.conditions" :key="idx">
+              <div>
+                <div x-show="idx > 0" class="text-center my-1">
+                  <button @click="c.join = (c.join === 'or' ? 'and' : 'or')"
+                    :class="c.join === 'or' ? 'bg-purple-900/40 text-purple-300 border-purple-700' : 'bg-gh-bg text-gh-dim border-gh-border2 hover:text-gh-text'"
+                    :title="c.join === 'or' ? 'OR · click to switch to AND' : 'AND · click to switch to OR'"
+                    class="text-[10px] px-2 py-0.5 rounded border transition font-medium"
+                    x-text="c.join === 'or' ? 'OR' : 'AND'"></button>
+                </div>
+                <div class="flex items-center gap-2 bg-gh-bg/40 border border-gh-border rounded p-2">
+                  <!-- :selected per-option + manual @change handler avoids the
+                       Alpine x-model + x-for race that lands the select on
+                       the first option ("word") whenever the modal opens
+                       on an existing rule. -->
+                  <select @change="c.type = $event.target.value"
+                    class="px-2 py-1 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs">
+                    <template x-for="t in conditionTypes" :key="t.value">
+                      <option :value="t.value" :selected="t.value === c.type" x-text="t.label"></option>
+                    </template>
+                  </select>
+                  <input type="text" x-model="c.value"
+                    :disabled="!conditionAcceptsValue(c.type)"
+                    :placeholder="conditionPlaceholder(c.type)"
+                    class="flex-1 px-2 py-1 rounded border border-gh-border2 bg-gh-bg text-gh-text text-xs focus:border-gh-blue outline-none disabled:opacity-40 disabled:cursor-not-allowed">
+                  <button @click="c.caseInsensitive = !c.caseInsensitive"
+                    :disabled="!conditionSupportsCase(c.type)"
+                    :class="c.caseInsensitive ? 'bg-blue-700 text-white border-blue-700' : 'bg-gh-bg text-gh-dim'"
+                    :title="!conditionSupportsCase(c.type) ? 'Case toggle does not apply to this condition type' : (c.caseInsensitive ? 'Case-insensitive (click for case-sensitive)' : 'Case-sensitive (click for case-insensitive)')"
+                    class="text-[10px] px-2 py-1 rounded border border-gh-border2 disabled:opacity-30 disabled:cursor-not-allowed">Aa</button>
+                  <button @click="removeConditionFromModal(idx)"
+                    :disabled="ruleModal.rule.conditions.length <= 1"
+                    title="Remove this condition"
+                    class="text-gh-dim hover:text-gh-red px-1 leading-none text-base disabled:opacity-30 disabled:cursor-not-allowed">×</button>
+                </div>
+              </div>
+            </template>
+          </div>
+          <button @click="addConditionToModal()"
+            class="text-xs px-2 py-1 mt-2 rounded bg-gh-border text-gh-muted hover:bg-gh-border2 hover:text-gh-text transition">+ Add condition</button>
+        </div>
+        <!-- Scope -->
+        <div>
+          <label class="text-xs font-medium text-gh-muted block mb-1.5"
+            x-text="ruleModal.scope === 'global' ? 'Applies to' : 'Applies to channels'"></label>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="radio" :checked="ruleModal.scopeMode === 'all'" @change="setRuleModalScopeMode('all')" class="accent-blue-600">
+              <span class="text-sm text-gh-text"
+                x-text="ruleModal.scope === 'global' ? 'Everywhere (all enabled categories)' : 'All channels in this category'"></span>
+            </label>
+            <label class="flex items-start gap-2 cursor-pointer">
+              <input type="radio" :checked="ruleModal.scopeMode === 'only'" @change="setRuleModalScopeMode('only')" class="accent-blue-600 mt-1">
+              <div class="flex-1">
+                <span class="text-sm text-gh-text"
+                  x-text="ruleModal.scope === 'global' ? 'Only selected categories:' : 'Only selected channels:'"></span>
+                <div x-show="ruleModal.scopeMode === 'only'" class="mt-1.5 flex flex-wrap gap-1">
+                  <template x-for="name in ruleModalScopeList()" :key="'o-' + name">
+                    <button @click="toggleRuleModalScopeName(name)"
+                      :class="ruleModalScopeNames().includes(name) ? 'bg-blue-700 text-white border-blue-700' : 'bg-gh-bg text-gh-muted border-gh-border2 hover:text-gh-text'"
+                      class="text-[10px] px-2 py-0.5 rounded border transition"
+                      x-text="(ruleModal.scope === 'global' ? '' : '#') + name"></button>
+                  </template>
+                  <span x-show="ruleModalScopeList().length === 0" class="text-[10px] text-gh-dim">Nothing to choose yet</span>
+                </div>
+              </div>
+            </label>
+            <label class="flex items-start gap-2 cursor-pointer">
+              <input type="radio" :checked="ruleModal.scopeMode === 'except'" @change="setRuleModalScopeMode('except')" class="accent-blue-600 mt-1">
+              <div class="flex-1">
+                <span class="text-sm text-gh-text">All except:</span>
+                <div x-show="ruleModal.scopeMode === 'except'" class="mt-1.5 flex flex-wrap gap-1">
+                  <template x-for="name in ruleModalScopeList()" :key="'e-' + name">
+                    <button @click="toggleRuleModalScopeName(name)"
+                      :class="ruleModalScopeNames().includes(name) ? 'bg-blue-700 text-white border-blue-700' : 'bg-gh-bg text-gh-muted border-gh-border2 hover:text-gh-text'"
+                      class="text-[10px] px-2 py-0.5 rounded border transition"
+                      x-text="(ruleModal.scope === 'global' ? '' : '#') + name"></button>
+                  </template>
+                  <span x-show="ruleModalScopeList().length === 0" class="text-[10px] text-gh-dim">Nothing to choose yet</span>
+                </div>
+              </div>
+            </label>
+          </div>
+        </div>
+        <!-- Note -->
+        <div>
+          <label class="text-xs font-medium text-gh-muted block mb-1.5">Note
+            <span class="text-gh-dim font-normal">· optional, shown in the rule list and the conflict log</span>
+          </label>
+          <input type="text" x-model="ruleModal.rule.note"
+            placeholder="Short label so you remember what this rule is for"
+            class="w-full px-2 py-1.5 rounded border border-gh-border2 bg-gh-bg text-gh-text text-sm focus:border-gh-blue outline-none">
+        </div>
+      </div>
+      <div x-show="ruleModal.activeTab === 'help'" class="px-5 py-4 space-y-4 text-sm text-gh-muted leading-relaxed">
+        <div>
+          <h4 class="text-sm font-semibold text-gh-text mb-1.5">How rules work</h4>
+          <p class="text-xs">A rule fires when its conditions match a message. The action decides what happens to the matched messages:</p>
+          <ul class="text-xs mt-1.5 space-y-1 list-disc list-inside">
+            <li><b class="text-gh-green">Keep</b>: never remove the matched messages, even if the age-based cleanup or another delete rule would. Keep always wins on a conflict.</li>
+            <li><b class="text-gh-red">Delete</b>: remove the matched messages, independent of their age.</li>
+          </ul>
+          <p class="text-xs mt-2">The most specific level decides. A rule on a channel beats one on its category, which beats a global rule. If no rule matches, the channel's normal age-based cleanup runs.</p>
+        </div>
+
+        <div>
+          <h4 class="text-sm font-semibold text-gh-text mb-1.5">Condition types</h4>
+          <dl class="text-xs space-y-1.5">
+            <div><dt class="inline font-semibold text-gh-text">Word.</dt> <dd class="inline">Plain text matched anywhere in the message body or in an embed (title, description, fields). Case-insensitive by default; click Aa to make it case-sensitive. Substring match: "spam" matches "Anti-spam policy" too.</dd></div>
+            <div><dt class="inline font-semibold text-gh-text">Regex.</dt> <dd class="inline">Regular expression (JavaScript syntax) matched against the message text and embed text. Use <code class="text-[10px]">^</code> and <code class="text-[10px]">$</code> to anchor, <code class="text-[10px]">\b</code> for word boundaries.</dd></div>
+            <div><dt class="inline font-semibold text-gh-text">URL.</dt> <dd class="inline">Matches against http/https URLs in the message body, embed links, embed images, and attachment URLs. Empty value matches any URL; a regex value filters which URLs count (e.g. <code class="text-[10px]">tracker\.example\.com</code>).</dd></div>
+            <div><dt class="inline font-semibold text-gh-text">User ID.</dt> <dd class="inline">Matches the author's exact Discord ID (17-19 digits). Right-click a user in Discord and choose Copy User ID.</dd></div>
+            <div><dt class="inline font-semibold text-gh-text">Any bot.</dt> <dd class="inline">Matches every message authored by a bot or webhook. PurgeBot's own webhook posts count as bot too.</dd></div>
+            <div><dt class="inline font-semibold text-gh-text">Pinned.</dt> <dd class="inline">Matches messages pinned in the channel. The Settings -> Skip Pinned Messages toggle is the default for when no rule overrides; a rule with this condition can override per category or channel.</dd></div>
+            <div><dt class="inline font-semibold text-gh-text">Attachment.</dt> <dd class="inline">Matches messages with files attached. Empty value matches any attachment; a regex value filters by filename (e.g. <code class="text-[10px]">\.exe$</code> for executables, <code class="text-[10px]">\.pdf$</code> for PDFs). An attached image counts here too.</dd></div>
+            <div><dt class="inline font-semibold text-gh-text">Image.</dt> <dd class="inline">Matches messages that contain an image: an image file attached (by content-type or by extension like .png / .jpg / .gif / .webp) OR an embed that contains an image (Twitter unfurls, link previews). A PDF attachment does not count here.</dd></div>
+            <div><dt class="inline font-semibold text-gh-text">Mention.</dt> <dd class="inline">Matches messages that ping someone. Empty value matches any mention. Use <code class="text-[10px]">everyone</code> or <code class="text-[10px]">here</code> for the broadcast pings (Discord treats them the same). Or a 17-19 digit user or role ID for a specific target.</dd></div>
+            <div><dt class="inline font-semibold text-gh-text">Reply.</dt> <dd class="inline">Matches messages that are replies to another message (the small "Replying to ..." header in Discord). Useful for keeping or removing threaded discussions.</dd></div>
+          </dl>
+        </div>
+
+        <div>
+          <h4 class="text-sm font-semibold text-gh-text mb-1.5">Combining conditions with AND / OR</h4>
+          <p class="text-xs">All conditions on a rule are joined left-to-right. Click the AND/OR button between any two conditions to switch how they combine. AND binds first, so reading goes left to right with parentheses where needed.</p>
+          <div class="text-xs mt-2 space-y-2 bg-gh-bg/40 border border-gh-border rounded p-3">
+            <div>
+              <div class="font-semibold text-gh-text">Example 1 - pure AND</div>
+              <div>Delete messages from bots that contain a URL.</div>
+              <div class="text-gh-dim mt-0.5">Conditions: <b>Any bot</b> AND <b>URL</b> (empty)</div>
+              <div class="text-gh-dim">Both must be true for the rule to fire.</div>
+            </div>
+            <div>
+              <div class="font-semibold text-gh-text">Example 2 - pure OR</div>
+              <div>Delete messages containing any of three spam words.</div>
+              <div class="text-gh-dim mt-0.5">Conditions: word "spam" OR word "ad" OR word "promo"</div>
+              <div class="text-gh-dim">Any single match is enough.</div>
+            </div>
+            <div>
+              <div class="font-semibold text-gh-text">Example 3 - AND binds before OR</div>
+              <div>Delete messages that are either from a bot with a URL, or that ping @everyone.</div>
+              <div class="text-gh-dim mt-0.5">Conditions: <b>Any bot</b> AND <b>URL</b> OR <b>mention</b> "everyone"</div>
+              <div class="text-gh-dim">Reads as <code class="text-[10px]">(Any bot AND URL) OR (mention everyone)</code>.</div>
+            </div>
+            <div>
+              <div class="font-semibold text-gh-text">Example 4 - "X AND (Y OR Z)" needs two rules</div>
+              <div>Delete attachments OR images from user 123456789012345678.</div>
+              <div class="text-gh-dim mt-0.5">Conditions on rule 1: User ID AND Attachment (any).</div>
+              <div class="text-gh-dim">Conditions on rule 2: User ID AND Image.</div>
+              <div class="text-gh-dim">Multiple rules at the same level are joined by OR.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 px-5 py-3 border-t border-gh-border">
+        <button @click="closeRuleModal()" class="px-3 py-1.5 text-sm rounded-md border border-gh-border2 text-gh-muted hover:text-gh-text transition">Cancel</button>
+        <button @click="saveRuleModal()" :disabled="!ruleModalCanSave() || ruleModal.activeTab === 'help'"
+          :title="ruleModal.activeTab === 'help' ? 'Switch to the Edit tab to save' : ''"
+          class="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-500 transition disabled:opacity-40 disabled:cursor-not-allowed">Save rule</button>
+      </div>
     </div>
   </div>
 </template>
@@ -1502,9 +1891,59 @@ function app() {
     // State
     status: { connected: false, dryRun: false, schedule: '0 2 * * *', timezone: 'UTC', totalCategories: 0, enabledCategories: 0, totalChannels: 0 },
     stats: { lastRun: null, history: [] },
-    editConfig: { categories: {}, discord: {}, logging: {}, webhooks: {}, gotify: {}, display: {}, scheduleEnabled: true },
+    editConfig: { categories: {}, discord: {}, logging: {}, webhooks: {}, gotify: {}, display: {}, scheduleEnabled: true, rules: [] },
     configDirty: false,
+
+    // Credential masking - server sends this sentinel for fields with a saved
+    // value. On load we strip it from editConfig and remember which fields had
+    // saved values via credentialSaved. On save, empty + saved => sentinel back
+    // (server keeps existing); empty + not saved => actual empty (clears).
+    credMask: '__credential_unchanged__',
+    credentialSaved: { 'webhooks.cleanup': false, 'webhooks.info': false, 'gotify.token': false },
+
+    // Rule editor modal state. `scope` is 'global' or 'category'.
+    // `scopeName` is the category name when scope='category', ignored otherwise.
+    // `editIdx` is the index into the rules array when editing (null when adding).
+    runRuleModal: {
+      show: false,
+      scope: 'global',
+      scopeName: '',
+      ruleIdx: null,
+      ruleDescription: '',
+      ruleAction: 'delete',
+      busy: false,
+      error: '',
+    },
+    ruleModal: {
+      show: false,
+      scope: 'category',
+      scopeName: '',
+      editIdx: null,
+      rule: null,
+      scopeMode: 'all',          // 'all' | 'only' | 'except'
+      activeTab: 'edit',          // 'edit' | 'help'
+      conflict: null,             // populated by detectRuleConflicts on save attempt
+    },
+    conditionTypes: [
+      { value: 'word',       label: 'Word',       placeholder: 'e.g. spam',                          hint: 'Plain text matched anywhere in the message or embed.' },
+      { value: 'regex',      label: 'Regex',      placeholder: 'e.g. (?i)foo\\d+',                   hint: 'Regular expression matched against message text and embed text.' },
+      { value: 'url',        label: 'URL',        placeholder: 'leave blank for any URL',            hint: 'Regex matched against URLs in the message. Empty value matches any URL.' },
+      { value: 'user',       label: 'User ID',    placeholder: '17-digit Discord ID',                hint: 'Right-click the user in Discord -> Copy User ID.' },
+      { value: 'bot',        label: 'Any bot',    placeholder: '(no value needed)',                  hint: 'Matches every message posted by a bot or webhook.' },
+      { value: 'pinned',     label: 'Pinned',     placeholder: '(no value needed)',                  hint: 'Matches messages that are pinned in the channel.' },
+      { value: 'attachment', label: 'Attachment', placeholder: 'leave blank for any, or filename regex', hint: 'Matches messages with files attached. Add a regex to filter by filename (e.g. \\.exe$).' },
+      { value: 'image',      label: 'Image',      placeholder: '(no value needed)',                  hint: 'Matches messages with an image attached or an embedded image.' },
+      { value: 'mention',    label: 'Mention',    placeholder: 'blank, "everyone", "here", or user/role ID', hint: 'Matches messages that ping someone. Empty = any mention. Use "everyone" or "here" for broadcast, or a user/role ID for a specific target.' },
+      { value: 'reply',      label: 'Reply',      placeholder: '(no value needed)',                  hint: 'Matches messages that are replies to another message.' },
+    ],
     configSection: 'cleanup',
+    // Display preferences - persisted per-browser via localStorage, not config.yaml.
+    uiScale: localStorage.getItem('purgebot-ui-scale') || '1',
+    // Security section state
+    apiKey: '',
+    apiKeyVisible: false,
+    rotateKeyModal: { show: false, currentPassword: '', error: '', busy: false },
+    changePasswordModal: { show: false, currentPassword: '', newPassword: '', confirmPassword: '', error: '', busy: false },
     webhookTesting: null,
     gotifyTesting: false,
     retentionMenu: null, // 'catName-idx' key of open dropdown
@@ -1524,6 +1963,7 @@ function app() {
     showCategoryList: false,
     categoryRunning: {},
     categoryResults: {},
+    detailsExpanded: {}, // keyed by "category/channel" - whether the attribution list is open
     scheduleEdit: { schedule: '' },
 
     // Cleanup tab
@@ -1572,10 +2012,64 @@ function app() {
     toastType: 'success',
     toastTimer: null,
 
+    // URL routing. Hash format:
+    //   #overview, #cleanup, #sync, #webhooks, #statistics, #logs
+    //   #settings/<section>   (section = cleanup|notifications|schedule|tools|display|general|security)
+    // Lets you open a section in a new tab, use browser back/forward, and
+    // share/bookmark a specific page. State <-> URL is two-way: tab + sub-tab
+    // changes write the hash, hashchange events (back/forward, direct edit)
+    // read it back.
+    knownConfigSections: ['cleanup', 'notifications', 'schedule', 'tools', 'display', 'general', 'security'],
+    hashFromState() {
+      if (this.tab === 'config') {
+        return '#settings/' + (this.configSection || 'cleanup');
+      }
+      return '#' + this.tab;
+    },
+    applyHashState() {
+      const raw = (window.location.hash || '').replace(/^#/, '');
+      if (!raw) { this.tab = 'overview'; return; }
+      const [first, second] = raw.split('/');
+      if (first === 'settings') {
+        this.tab = 'config';
+        if (second && this.knownConfigSections.includes(second)) this.configSection = second;
+      } else if (this.tabs.find(t => t.id === first)) {
+        this.tab = first;
+      }
+      // Canonicalise the URL right away (e.g. bare "#settings" gets normalised
+      // to "#settings/cleanup"). Use replaceState so the partial form isn't
+      // left as a back-button entry that would loop right back to the same
+      // canonical state.
+      this.syncUrlHash(true);
+    },
+    syncUrlHash(replace = false) {
+      const target = this.hashFromState();
+      if (window.location.hash === target) return;
+      history[replace ? 'replaceState' : 'pushState'](null, '', target);
+    },
     async init() {
-      await Promise.all([this.loadStatus(), this.loadStats(), this.loadConfig(), this.loadRecoveryFiles()]);
+      // Fetch CSRF token first so any subsequent state-changing call has it.
+      await this.refreshCsrfToken();
+      await Promise.all([this.loadStatus(), this.loadStats(), this.loadConfig(), this.loadRecoveryFiles(), this.loadAuthStatus()]);
+      // Land on the section the URL points at (deep-link, bookmark, refresh,
+      // back/forward). Hashchange listener wires browser navigation; $watch
+      // pushes new history entries on tab + sub-tab clicks.
+      this.applyHashState();
+      window.addEventListener('hashchange', () => this.applyHashState());
+      this.$watch('tab', () => this.syncUrlHash());
+      this.$watch('configSection', () => this.syncUrlHash());
+      // Warn before page navigation when there are unsaved changes. Browsers
+      // intentionally ignore the custom string and show their own dialog, but
+      // setting preventDefault + returnValue is the documented contract for
+      // triggering it.
+      window.addEventListener('beforeunload', (e) => {
+        if (this.configDirty) {
+          e.preventDefault();
+          e.returnValue = '';
+        }
+      });
       // Show last run results in Cleanup tab (survives page refresh)
-      // Don't load stale lastRun if a cleanup is currently active — progress events will build it
+      // Don't load stale lastRun if a cleanup is currently active - progress events will build it
       if (this.stats.lastRun && !this.status.cleanupRunning) {
         this.cleanupResults = this.stats.lastRun;
         this.cleanupLastRun = this.stats.lastRun.timestamp || '';
@@ -1609,9 +2103,161 @@ function app() {
     },
 
     // --- API helpers ---
-    // CSRF header required for state-changing requests
+    // CSRF token fetched on init + refreshed on 403; sent with every
+    // state-changing request via X-CSRF-Token header.
+    csrfToken: '',
+    authStatus: { authenticated: false, user: null, requirement: '', firstRun: false, trustedBypass: false, hasCreds: false },
+    setUIScale(value) {
+      this.uiScale = value;
+      localStorage.setItem('purgebot-ui-scale', value);
+      // Chromium-original `zoom` property. Firefox 126+ ships it too.
+      // Setting `zoom: 1` is a no-op; only larger values inflate content.
+      if (CSS.supports('zoom', '1')) {
+        document.documentElement.style.zoom = value === '1' ? '' : value;
+      }
+    },
+    async loadAuthStatus() {
+      try {
+        const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+        if (r.ok) this.authStatus = await r.json();
+      } catch (_) {}
+    },
+    async refreshCsrfToken() {
+      try {
+        const r = await fetch('/api/auth/csrf', { credentials: 'same-origin' });
+        if (r.ok) {
+          const j = await r.json();
+          this.csrfToken = j.token || '';
+          return true;
+        }
+      } catch (_) {}
+      // Surface the failure so the user understands subsequent save errors.
+      if (typeof this.showToast === 'function') {
+        this.showToast('Session token fetch failed - reload the page if saves error out.', 'error');
+      }
+      return false;
+    },
     apiHeaders() {
-      return { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+      return { 'Content-Type': 'application/json', 'X-CSRF-Token': this.csrfToken };
+    },
+    async logout() {
+      try {
+        await fetch('/api/auth/logout', { method: 'POST', headers: this.apiHeaders(), credentials: 'same-origin' });
+      } catch (_) {}
+      window.location.href = '/login';
+    },
+    // --- API key + password management ---
+    async loadApiKey() {
+      if (!this.authStatus.authenticated) return;
+      try {
+        const r = await fetch('/api/auth/api-key', { credentials: 'same-origin' });
+        if (r.ok) {
+          const j = await r.json();
+          this.apiKey = j.apiKey || '';
+        } else {
+          this.apiKey = '';
+          this.showToast('Could not load API key (' + r.status + ')', 'error');
+        }
+      } catch (err) {
+        this.apiKey = '';
+        this.showToast('Could not load API key: ' + err.message, 'error');
+      }
+    },
+    async copyApiKey() {
+      if (!this.apiKey) return;
+      // Try the modern clipboard API first (only available on HTTPS + localhost).
+      try {
+        await navigator.clipboard.writeText(this.apiKey);
+        this.showToast('API key copied to clipboard');
+        return;
+      } catch (_) {}
+      // HTTP-context fallback: temporary textarea + document.execCommand('copy').
+      // Deprecated but still supported by every browser as of 2026.
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = this.apiKey;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        ta.style.top = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ta.setSelectionRange(0, this.apiKey.length);
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) {
+          this.showToast('API key copied to clipboard');
+          return;
+        }
+      } catch (_) {}
+      this.showToast('Copy failed - click Show and copy the key manually', 'error');
+    },
+    openRotateKeyModal() {
+      this.rotateKeyModal = { show: true, currentPassword: '', error: '', busy: false };
+    },
+    closeRotateKeyModal() {
+      this.rotateKeyModal.show = false;
+    },
+    async confirmRotateKey() {
+      const m = this.rotateKeyModal;
+      m.error = '';
+      if (!m.currentPassword) { m.error = 'Enter your current password'; return; }
+      m.busy = true;
+      try {
+        const r = await fetch('/api/auth/api-key/rotate', {
+          method: 'POST',
+          headers: this.apiHeaders(),
+          credentials: 'same-origin',
+          body: JSON.stringify({ currentPassword: m.currentPassword }),
+        });
+        const data = await r.json();
+        if (r.ok) {
+          this.apiKey = data.apiKey;
+          this.apiKeyVisible = true;
+          this.showToast('API key rotated. Update any clients using the old key.');
+          this.closeRotateKeyModal();
+        } else {
+          m.error = data.error || 'Rotate failed';
+        }
+      } catch (err) {
+        m.error = 'Network error: ' + err.message;
+      } finally {
+        m.busy = false;
+      }
+    },
+    openChangePasswordModal() {
+      this.changePasswordModal = { show: true, currentPassword: '', newPassword: '', confirmPassword: '', error: '', busy: false };
+    },
+    closeChangePasswordModal() {
+      this.changePasswordModal.show = false;
+    },
+    async confirmChangePassword() {
+      const m = this.changePasswordModal;
+      m.error = '';
+      if (!m.currentPassword) { m.error = 'Enter your current password'; return; }
+      if (!m.newPassword) { m.error = 'Enter a new password'; return; }
+      if (m.newPassword !== m.confirmPassword) { m.error = 'New password and confirmation do not match'; return; }
+      m.busy = true;
+      try {
+        const r = await fetch('/api/auth/change-password', {
+          method: 'POST',
+          headers: this.apiHeaders(),
+          credentials: 'same-origin',
+          body: JSON.stringify({ currentPassword: m.currentPassword, newPassword: m.newPassword }),
+        });
+        const data = await r.json();
+        if (r.ok) {
+          this.showToast('Password changed.');
+          this.closeChangePasswordModal();
+        } else {
+          m.error = data.error || 'Change failed';
+        }
+      } catch (err) {
+        m.error = 'Network error: ' + err.message;
+      } finally {
+        m.busy = false;
+      }
     },
 
     // --- API calls ---
@@ -1629,7 +2275,7 @@ function app() {
             }
             if (this.status.cleanupCancelling) this.cleanupCancelling = true;
           } else if (this.cleanupRunning) {
-            // Server says done but we still think it's running — reset
+            // Server says done but we still think it's running - reset
             this.cleanupRunning = false; this.stopCleanupTimer();
             this.cleanupCancelling = false;
             this.cleanupCurrentChannel = null; this.cleanupChannelProgress = null; this.cleanupDryRun = null;
@@ -1671,17 +2317,62 @@ function app() {
           cfg.sortInclude = cfg.sortInclude || {};
           cfg.sortPinned = cfg.sortPinned || {};
           cfg.webhookDiscoveryOnSchedule = !!cfg.webhookDiscoveryOnSchedule;
+          // Detect masked credentials, remember which were saved, then clear
+          // the sentinel so inputs show empty + placeholder instead of literal.
+          this.credentialSaved = {
+            'webhooks.cleanup': cfg.webhooks.cleanup === this.credMask,
+            'webhooks.info': cfg.webhooks.info === this.credMask,
+            'gotify.token': cfg.gotify.token === this.credMask,
+          };
+          if (cfg.webhooks.cleanup === this.credMask) cfg.webhooks.cleanup = '';
+          if (cfg.webhooks.info === this.credMask) cfg.webhooks.info = '';
+          if (cfg.gotify.token === this.credMask) cfg.gotify.token = '';
           this.editConfig = cfg;
           this.configDirty = false;
         }
       } catch {}
+    },
+    // Restore the mask sentinel for any credential field that was previously
+    // saved and remains empty - signals "no change" to the server. If the
+    // user explicitly cleared the saved state (via the Remove button), the
+    // field passes through as empty and the server treats it as a clear.
+    buildConfigSavePayload() {
+      const payload = JSON.parse(JSON.stringify(this.editConfig));
+      const fields = [
+        ['webhooks', 'cleanup'],
+        ['webhooks', 'info'],
+        ['gotify', 'token'],
+      ];
+      for (const [parent, child] of fields) {
+        const key = `${parent}.${child}`;
+        if (this.credentialSaved[key] && payload[parent] && (payload[parent][child] === '' || payload[parent][child] === undefined)) {
+          payload[parent][child] = this.credMask;
+        }
+      }
+      return payload;
+    },
+    // Resolve the value to send to a test endpoint: user-typed value if any,
+    // mask sentinel if the field still represents a stored credential, empty
+    // string otherwise.
+    credValueForRequest(parent, child) {
+      const live = this.editConfig?.[parent]?.[child];
+      if (live) return live;
+      if (this.credentialSaved[`${parent}.${child}`]) return this.credMask;
+      return '';
+    },
+    // Mark a saved credential as deliberately removed - next save will clear
+    // it on the server. Also wipes any user input that hasn't been saved yet.
+    clearSavedCredential(parent, child) {
+      this.credentialSaved[`${parent}.${child}`] = false;
+      if (this.editConfig?.[parent]) this.editConfig[parent][child] = '';
+      this.configDirty = true;
     },
     async saveConfig() {
       try {
         const r = await fetch('/api/config', {
           method: 'PUT',
           headers: this.apiHeaders(),
-          body: JSON.stringify(this.editConfig),
+          body: JSON.stringify(this.buildConfigSavePayload()),
         });
         if (r.ok) {
           this.configDirty = false;
@@ -1698,7 +2389,7 @@ function app() {
       }
     },
     async testWebhook(type) {
-      const url = this.editConfig.webhooks?.[type];
+      const url = this.credValueForRequest('webhooks', type);
       if (!url) return;
       this.webhookTesting = type;
       try {
@@ -1721,7 +2412,7 @@ function app() {
     },
     async testGotify() {
       const url = this.editConfig.gotify?.url;
-      const token = this.editConfig.gotify?.token;
+      const token = this.credValueForRequest('gotify', 'token');
       if (!url || !token) return;
       this.gotifyTesting = true;
       try {
@@ -1833,7 +2524,7 @@ function app() {
         if (r.ok) {
           const label = this.cleanupMode === 'live' ? 'Cleanup' : 'Dry-run';
           this.showToast(`${label} started`);
-          // Results arrive via SSE cleanup-complete event — no polling needed
+          // Results arrive via SSE cleanup-complete event - no polling needed
         } else {
           const data = await r.json();
           this.showToast(data.error || 'Failed', 'error');
@@ -1879,7 +2570,7 @@ function app() {
           this.syncResults = data;
           const msg = data.changes > 0
             ? `Sync complete: ${data.categories} categories, ${data.channels} channels (${data.changes} changes)`
-            : `Sync complete: ${data.categories} categories, ${data.channels} channels — no changes`;
+            : `Sync complete: ${data.categories} categories, ${data.channels} channels - no changes`;
           this.showToast(msg);
           await this.loadConfig();
           await this.loadStatus();
@@ -1994,12 +2685,12 @@ function app() {
           setTimeout(() => this.connectSSE(), delay);
         }
       };
-      // Listen for cleanup-progress event — incremental results per channel
+      // Listen for cleanup-progress event - incremental results per channel
       this.sseSource.addEventListener('cleanup-progress', (e) => {
         try {
           const data = JSON.parse(e.data);
           if (!data.channel) {
-            // Scanning event — update current channel indicator
+            // Scanning event - update current channel indicator
             this.cleanupCurrentChannel = data.currentChannel || null;
             this.cleanupChannelProgress = data.channelIndex && data.channelCount ? `${data.channelIndex}/${data.channelCount}` : null;
             if (data.dryRun !== undefined) this.cleanupDryRun = data.dryRun;
@@ -2014,7 +2705,7 @@ function app() {
               }
             }
           } else {
-            // Channel result — build up cleanupResults incrementally
+            // Channel result - build up cleanupResults incrementally
             if (!this.cleanupResults) {
               this.cleanupResults = { totalProcessed: 0, totalPurged: 0, totalErrors: 0, dryRun: data.dryRun, categories: {} };
             }
@@ -2034,11 +2725,11 @@ function app() {
           }
         } catch (err) { console.warn('SSE cleanup-progress parse error:', err); }
       });
-      // Listen for cleanup-complete event — handles both Cleanup tab and per-category runs
+      // Listen for cleanup-complete event - handles both Cleanup tab and per-category runs
       this.sseSource.addEventListener('cleanup-complete', (e) => {
         try {
           const stats = JSON.parse(e.data);
-          // Update Cleanup tab — authoritative final data replaces progressive state
+          // Update Cleanup tab - authoritative final data replaces progressive state
           this.cleanupResults = stats;
           this.cleanupLastRun = new Date().toISOString();
           this.cleanupRunning = false; this.stopCleanupTimer();
@@ -2109,7 +2800,7 @@ function app() {
           barColor: '#3fb950',
         };
       }
-      // Last run — from lastLiveRun.categories (excludes dry-runs)
+      // Last run - from lastLiveRun.categories (excludes dry-runs)
       const cats = this.stats.lastLiveRun?.categories || {};
       const catEntries = Object.entries(cats).map(([name, d]) => [name, d.purged || 0]).filter(([,v]) => v > 0).sort((a,b) => b[1] - a[1]);
       const chAll = [];
@@ -2129,7 +2820,7 @@ function app() {
     initStatsCharts() {
       if (!this.stats.history || this.stats.history.length === 0) return;
 
-      // Timeline — live runs only, chronological
+      // Timeline - live runs only, chronological
       const liveHistory = [...(this.stats.history || [])].filter(h => !h.dryRun).reverse();
       const tlLabels = liveHistory.map(h => new Date(h.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
       const tlPurged = liveHistory.map(h => h.purged);
@@ -2266,7 +2957,7 @@ function app() {
       const ch = cat._channels[idx];
       const name = this.channelName(ch);
       if (value === '' || value === null || value === undefined) {
-        // Remove override — make it a plain string
+        // Remove override - make it a plain string
         cat._channels.splice(idx, 1, name);
       } else {
         const parsed = parseInt(value, 10);
@@ -2274,6 +2965,291 @@ function app() {
         cat._channels.splice(idx, 1, { [name]: parsed });
       }
       this.configDirty = true;
+    },
+    // --- Rules editor ---
+    blankRule() {
+      return {
+        action: 'delete',
+        conditions: [{ type: 'word', value: '', caseInsensitive: true }],
+        note: '',
+      };
+    },
+    conditionRequiresValue(type) {
+      return !['bot', 'pinned', 'image', 'reply', 'url', 'attachment', 'mention'].includes(type);
+    },
+    conditionAcceptsValue(type) {
+      return !['bot', 'pinned', 'image', 'reply'].includes(type);
+    },
+    conditionSupportsCase(type) {
+      // Regex-driven types honour the Aa toggle. user/mention are literal,
+      // word is always case-insensitive by default with toggle to override.
+      return ['word', 'regex', 'url', 'attachment'].includes(type);
+    },
+    conditionPlaceholder(type) {
+      const t = this.conditionTypes.find(x => x.value === type);
+      return t ? t.placeholder : '';
+    },
+    conditionTypeLabel(type) {
+      const t = this.conditionTypes.find(x => x.value === type);
+      return t ? t.label : type;
+    },
+    addConditionToModal() {
+      if (!this.ruleModal.rule) return;
+      this.ruleModal.rule.conditions.push({ type: 'word', value: '', caseInsensitive: true });
+    },
+    removeConditionFromModal(idx) {
+      if (!this.ruleModal.rule) return;
+      if (this.ruleModal.rule.conditions.length <= 1) return;
+      this.ruleModal.rule.conditions.splice(idx, 1);
+    },
+    openNewRuleModal(scope, scopeName) {
+      this.ruleModal = {
+        show: true,
+        scope,
+        scopeName: scopeName || '',
+        editIdx: null,
+        rule: this.blankRule(),
+        scopeMode: 'all',
+        activeTab: 'edit',
+        conflict: null,
+      };
+    },
+    openRunRuleModal(scope, scopeName, idx) {
+      const list = scope === 'global'
+        ? (this.editConfig.rules || [])
+        : ((this.editConfig.categories[scopeName] || {}).rules || []);
+      const rule = list[idx];
+      if (!rule) return;
+      this.runRuleModal = {
+        show: true,
+        scope,
+        scopeName: scopeName || '',
+        ruleIdx: idx,
+        ruleDescription: this.describeRule(rule),
+        ruleAction: rule.action || 'delete',
+        busy: false,
+        error: '',
+      };
+    },
+    closeRunRuleModal() {
+      this.runRuleModal.show = false;
+    },
+    async confirmRunRule(dryRun) {
+      const m = this.runRuleModal;
+      m.error = '';
+      m.busy = true;
+      try {
+        const r = await fetch('/api/cleanup/run-rule', {
+          method: 'POST',
+          headers: this.apiHeaders(),
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            scope: m.scope,
+            categoryName: m.scope === 'category' ? m.scopeName : null,
+            ruleIdx: m.ruleIdx,
+            dryRun,
+          }),
+        });
+        const data = await r.json();
+        if (r.ok) {
+          const where = m.scope === 'global' ? 'global' : m.scopeName;
+          this.showToast(`${dryRun ? 'Dry run' : 'Live run'} started on ${where}. See cleanup results.`);
+          this.tab = 'cleanup';
+          this.closeRunRuleModal();
+        } else {
+          m.error = data.error || 'Run failed';
+        }
+      } catch (err) {
+        m.error = 'Network error: ' + err.message;
+      } finally {
+        m.busy = false;
+      }
+    },
+    openEditRuleModal(scope, scopeName, idx) {
+      const list = scope === 'global'
+        ? (this.editConfig.rules || [])
+        : ((this.editConfig.categories[scopeName] || {}).rules || []);
+      const src = list[idx];
+      if (!src) return;
+      const clone = JSON.parse(JSON.stringify(src));
+      if (!Array.isArray(clone.conditions) || clone.conditions.length === 0) {
+        clone.conditions = [{ type: 'word', value: '', caseInsensitive: true }];
+      }
+      let scopeMode = 'all';
+      const allowKey = scope === 'global' ? 'categories' : 'channels';
+      const excludeKey = scope === 'global' ? 'excludeCategories' : 'excludeChannels';
+      if (Array.isArray(clone[allowKey]) && clone[allowKey].length > 0) {
+        scopeMode = 'only';
+      } else if (Array.isArray(clone[excludeKey]) && clone[excludeKey].length > 0) {
+        scopeMode = 'except';
+      }
+      this.ruleModal = {
+        show: true,
+        scope,
+        scopeName: scopeName || '',
+        editIdx: idx,
+        rule: clone,
+        scopeMode,
+        activeTab: 'edit',
+        conflict: null,
+      };
+    },
+    closeRuleModal() {
+      this.ruleModal.show = false;
+      this.ruleModal.rule = null;
+      this.ruleModal.conflict = null;
+    },
+    ruleModalChannelOptions() {
+      if (this.ruleModal.scope !== 'category') return [];
+      const cat = this.editConfig.categories[this.ruleModal.scopeName];
+      if (!cat || !Array.isArray(cat._channels)) return [];
+      return cat._channels.map(c => typeof c === 'string' ? c : Object.keys(c)[0]).filter(Boolean);
+    },
+    ruleModalCategoryOptions() {
+      return Object.keys(this.editConfig.categories || {}).sort();
+    },
+    ruleModalScopeList() {
+      return this.ruleModal.scope === 'global'
+        ? this.ruleModalCategoryOptions()
+        : this.ruleModalChannelOptions();
+    },
+    ruleModalScopeFieldName() {
+      const m = this.ruleModal.scopeMode;
+      const isGlobal = this.ruleModal.scope === 'global';
+      if (m === 'only')   return isGlobal ? 'categories'         : 'channels';
+      if (m === 'except') return isGlobal ? 'excludeCategories'  : 'excludeChannels';
+      return null;
+    },
+    ruleModalScopeNames() {
+      const k = this.ruleModalScopeFieldName();
+      if (!k) return [];
+      const list = this.ruleModal.rule?.[k];
+      return Array.isArray(list) ? list : [];
+    },
+    toggleRuleModalScopeName(name) {
+      const k = this.ruleModalScopeFieldName();
+      if (!k || !this.ruleModal.rule) return;
+      if (!Array.isArray(this.ruleModal.rule[k])) this.ruleModal.rule[k] = [];
+      const list = this.ruleModal.rule[k];
+      const idx = list.indexOf(name);
+      if (idx >= 0) list.splice(idx, 1);
+      else list.push(name);
+    },
+    setRuleModalScopeMode(mode) {
+      // Clean the other field when switching modes so we don't accidentally
+      // persist a stale exclude list when the rule moved to 'only'.
+      if (!this.ruleModal.rule) return;
+      const isGlobal = this.ruleModal.scope === 'global';
+      const allowKey   = isGlobal ? 'categories'        : 'channels';
+      const excludeKey = isGlobal ? 'excludeCategories' : 'excludeChannels';
+      if (mode === 'all')    { delete this.ruleModal.rule[allowKey]; delete this.ruleModal.rule[excludeKey]; }
+      if (mode === 'only')   { delete this.ruleModal.rule[excludeKey]; if (!Array.isArray(this.ruleModal.rule[allowKey])) this.ruleModal.rule[allowKey] = []; }
+      if (mode === 'except') { delete this.ruleModal.rule[allowKey];   if (!Array.isArray(this.ruleModal.rule[excludeKey])) this.ruleModal.rule[excludeKey] = []; }
+      this.ruleModal.scopeMode = mode;
+    },
+    ruleModalCanSave() {
+      const r = this.ruleModal.rule;
+      if (!r || (r.action !== 'keep' && r.action !== 'delete')) return false;
+      if (!Array.isArray(r.conditions) || r.conditions.length === 0) return false;
+      for (const c of r.conditions) {
+        if (!c || !c.type) return false;
+        if (this.conditionRequiresValue(c.type) && (!c.value || !c.value.length)) return false;
+      }
+      if (this.ruleModal.scopeMode === 'only' && this.ruleModalScopeNames().length === 0) return false;
+      return true;
+    },
+    saveRuleModal() {
+      const r = this.ruleModal.rule;
+      if (!this.ruleModalCanSave()) return;
+      // Strip empty value fields for valueless types so the YAML stays clean
+      for (const c of r.conditions) {
+        if (!this.conditionAcceptsValue(c.type)) delete c.value;
+        if (!this.conditionSupportsCase(c.type)) delete c.caseInsensitive;
+        // 'and' is the default join, no need to persist it explicitly.
+        if (c.join === 'and') delete c.join;
+      }
+      // The first condition's join is ignored at runtime; drop it for cleanliness.
+      if (r.conditions[0]) delete r.conditions[0].join;
+      if (typeof r.note === 'string' && r.note.trim() === '') delete r.note;
+      const targetList = this.ruleModal.scope === 'global'
+        ? (this.editConfig.rules = Array.isArray(this.editConfig.rules) ? this.editConfig.rules : [])
+        : ((this.editConfig.categories[this.ruleModal.scopeName].rules = Array.isArray(this.editConfig.categories[this.ruleModal.scopeName].rules) ? this.editConfig.categories[this.ruleModal.scopeName].rules : []));
+      if (this.ruleModal.editIdx === null) {
+        targetList.push(r);
+      } else {
+        targetList.splice(this.ruleModal.editIdx, 1, r);
+      }
+      this.configDirty = true;
+      this.closeRuleModal();
+      // Auto-persist rule edits so the user doesn't have to do two saves
+      // (modal Save + main Save). Failure shows a toast; the rule stays in
+      // editConfig and the main Save button remains available for retry.
+      this.saveConfig();
+    },
+    removeRule(scope, scopeName, idx) {
+      const list = scope === 'global'
+        ? (this.editConfig.rules || [])
+        : ((this.editConfig.categories[scopeName] || {}).rules || []);
+      if (idx < 0 || idx >= list.length) return;
+      list.splice(idx, 1);
+      this.configDirty = true;
+      // Same reasoning - removing a rule should take effect right away.
+      this.saveConfig();
+    },
+    // Human-readable summary of a rule for the listing - mirrors describeRule
+    // on the backend so the same rule reads the same way in the log and the UI.
+    // Groups conditions by the AND/OR join field, then renders the groups with
+    // OR between them. Single-group rules render their AND chain inline.
+    describeRule(rule) {
+      if (!rule) return '(unknown rule)';
+      if (rule.note) return rule.note;
+      const describeC = c => {
+        switch (c.type) {
+          case 'bot':        return 'any bot';
+          case 'pinned':     return 'pinned';
+          case 'user':       return `user ${c.value}`;
+          case 'url':        return c.value ? `URL matching /${c.value}/` : 'any URL';
+          case 'word':       return `word "${c.value}"`;
+          case 'regex':      return `text matching /${c.value}/`;
+          case 'attachment': return c.value ? `attachment named /${c.value}/` : 'any attachment';
+          case 'image':      return 'an image';
+          case 'mention':    return c.value ? `mention of ${c.value}` : 'any mention';
+          case 'reply':      return 'a reply';
+          default:           return c.type;
+        }
+      };
+      const groups = [];
+      let current = [];
+      for (const c of (rule.conditions || [])) {
+        if (current.length === 0) current.push(c);
+        else if (c.join === 'or') { groups.push(current); current = [c]; }
+        else current.push(c);
+      }
+      if (current.length > 0) groups.push(current);
+      const describeGroup = g => g.length === 1 ? describeC(g[0]) : `(${g.map(describeC).join(' AND ')})`;
+      return groups.length === 1 ? describeGroup(groups[0]) : groups.map(describeGroup).join(' OR ');
+    },
+    ruleScopeSummary(rule, scope) {
+      if (scope === 'global') {
+        if (Array.isArray(rule.categories) && rule.categories.length > 0) {
+          return `Only ${rule.categories.length} categor${rule.categories.length === 1 ? 'y' : 'ies'}`;
+        }
+        if (Array.isArray(rule.excludeCategories) && rule.excludeCategories.length > 0) {
+          return `All except ${rule.excludeCategories.length}`;
+        }
+        return 'Everywhere';
+      }
+      if (Array.isArray(rule.channels) && rule.channels.length > 0) {
+        return rule.channels.length === 1
+          ? `Only #${rule.channels[0]}`
+          : `Only ${rule.channels.length} channels`;
+      }
+      if (Array.isArray(rule.excludeChannels) && rule.excludeChannels.length > 0) {
+        return rule.excludeChannels.length === 1
+          ? `All except #${rule.excludeChannels[0]}`
+          : `All except ${rule.excludeChannels.length}`;
+      }
+      return 'All channels';
     },
     setCategoryDefault(catName, value) {
       const cat = this.editConfig.categories[catName];
@@ -2344,7 +3320,7 @@ function app() {
       try {
         const res = await fetch('/api/cleanup/sort', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          headers: this.apiHeaders(),
           body: JSON.stringify({ mode: m.mode, dryRun: true, skipCategories, includeVoice: !!this.editConfig.sortIncludeVoice, pinnedPositions: this.editConfig.sortPinned || {} })
         });
         const data = await res.json();
@@ -2363,7 +3339,7 @@ function app() {
       try {
         const res = await fetch('/api/cleanup/sort', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          headers: this.apiHeaders(),
           body: JSON.stringify({ mode: m.mode, dryRun: false, skipCategories, includeVoice: !!this.editConfig.sortIncludeVoice, pinnedPositions: this.editConfig.sortPinned || {} })
         });
         const data = await res.json();
@@ -2399,7 +3375,7 @@ function app() {
     retentionEffect(days, deleteOld) {
       if (days === -1) return 'never';
       if (deleteOld !== false) return '>' + days + 'd';
-      if (days >= 14) return '—'; // nothing happens: all deletable msgs are >14d but deleteOld is off
+      if (days >= 14) return '-'; // nothing happens: all deletable msgs are >14d but deleteOld is off
       return days + '–14d';
     },
 
@@ -2428,7 +3404,7 @@ function app() {
         const desc = cronstrue.toString(this.status.schedule || '0 2 * * *', this.cronOpts);
         const timeMatch = desc.match(/at (\d{1,2}:\d{2}(?:\s*[AP]M)?)/i);
         return timeMatch ? timeMatch[1] : desc;
-      } catch { return '—'; }
+      } catch { return '-'; }
     },
     get scheduleHumanPreview() {
       try {
@@ -2438,7 +3414,7 @@ function app() {
 
     // --- Utilities ---
     formatDuration(ms) {
-      if (!ms) return '—';
+      if (!ms) return '-';
       if (ms < 1000) return ms + 'ms';
       const s = Math.round(ms / 1000);
       if (s < 60) return s + 's';
@@ -2538,7 +3514,74 @@ function app() {
 }
 </script>
 <div style="text-align:center;padding:24px 0 8px;font-size:11px;color:#484f58">
-  PurgeBot <span x-text="status.version ? 'v' + status.version : ''"></span> — Built by <a href="https://github.com/ProphetSe7en" target="_blank" rel="noopener" style="color:#6e7681;text-decoration:none">ProphetSe7en</a>
+  PurgeBot <span x-text="status.version ? 'v' + status.version : ''"></span> - Built by <a href="https://github.com/ProphetSe7en" target="_blank" rel="noopener" style="color:#6e7681;text-decoration:none">ProphetSe7en</a>
+</div>
+
+<!-- Run-this-rule modal -->
+<div x-show="runRuleModal.show" x-cloak class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @keydown.escape.window="closeRunRuleModal()">
+  <div class="bg-gh-card border border-gh-border rounded-lg max-w-md w-full p-5" @click.stop>
+    <h2 class="text-base font-semibold text-gh-text mb-1">Run this rule</h2>
+    <p class="text-xs text-gh-dim mb-4">
+      Runs ONLY this rule. Retention is treated as "never" for this run, so age-based deletes are off and other rules are ignored. The result shows exactly what this rule catches.
+    </p>
+    <div class="mb-4 p-3 bg-gh-bg/60 border border-gh-border rounded text-xs">
+      <div class="flex items-center gap-2 mb-1.5">
+        <span class="text-[10px] px-1.5 py-0.5 rounded font-medium"
+          :class="runRuleModal.ruleAction === 'keep' ? 'bg-green-900/40 text-gh-green' : 'bg-red-900/40 text-gh-red'"
+          x-text="runRuleModal.ruleAction === 'keep' ? 'Keep' : 'Delete'"></span>
+        <span class="text-gh-dim" x-text="runRuleModal.scope === 'global' ? 'global rule' : 'category: ' + runRuleModal.scopeName"></span>
+      </div>
+      <div class="text-gh-text font-mono break-words" x-text="runRuleModal.ruleDescription"></div>
+    </div>
+    <div x-show="runRuleModal.error" class="mb-3 px-3 py-2 rounded-md border border-red-800 bg-red-900/20 text-gh-red text-xs" x-text="runRuleModal.error"></div>
+    <div class="flex justify-end gap-2">
+      <button type="button" @click="closeRunRuleModal()" :disabled="runRuleModal.busy" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-border text-gh-text text-xs hover:border-gh-blue transition disabled:opacity-40">Cancel</button>
+      <button type="button" @click="confirmRunRule(true)" :disabled="runRuleModal.busy" class="px-3 py-1.5 rounded-md border border-gh-blue bg-blue-900/20 text-gh-blue text-xs hover:bg-blue-900/40 transition disabled:opacity-40">Dry run</button>
+      <button type="button" @click="confirmRunRule(false)" :disabled="runRuleModal.busy"
+        :class="runRuleModal.ruleAction === 'keep' ? 'border-green-800 bg-green-900/30 text-gh-green hover:bg-green-900/50' : 'border-red-800 bg-red-900/30 text-gh-red hover:bg-red-900/50'"
+        class="px-3 py-1.5 rounded-md border text-xs transition disabled:opacity-40">Run live</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rotate API key modal -->
+<div x-show="rotateKeyModal.show" x-cloak class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @keydown.escape.window="closeRotateKeyModal()">
+  <form class="bg-gh-card border border-gh-border rounded-lg max-w-md w-full p-5" @click.stop @submit.prevent="confirmRotateKey()" autocomplete="off">
+    <h2 class="text-base font-semibold text-gh-text mb-1">Rotate API key</h2>
+    <p class="text-xs text-gh-dim mb-4">A new key replaces the current one. Any client using the old key stops working immediately.</p>
+    <label class="block text-xs text-gh-dim mb-1">Current password</label>
+    <!-- autocomplete=off + data-form-type=other suppresses Chrome's password-suggestion popover that misanchors inside fixed modals. -->
+    <input x-model="rotateKeyModal.currentPassword" type="password" autocomplete="off" data-form-type="other"
+      class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm focus:border-gh-blue outline-none">
+    <div x-show="rotateKeyModal.error" class="mt-3 px-3 py-2 rounded-md border border-red-800 bg-red-900/20 text-gh-red text-xs" x-text="rotateKeyModal.error"></div>
+    <div class="flex justify-end gap-2 mt-5">
+      <button type="button" @click="closeRotateKeyModal()" :disabled="rotateKeyModal.busy" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-border text-gh-text text-xs hover:border-gh-blue transition disabled:opacity-40">Cancel</button>
+      <button type="submit" :disabled="rotateKeyModal.busy" class="px-3 py-1.5 rounded-md border border-red-800 bg-red-900/30 text-gh-red text-xs hover:bg-red-900/50 transition disabled:opacity-40" x-text="rotateKeyModal.busy ? 'Rotating...' : 'Rotate now'"></button>
+    </div>
+  </form>
+</div>
+
+<!-- Change password modal -->
+<div x-show="changePasswordModal.show" x-cloak class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @keydown.escape.window="closeChangePasswordModal()">
+  <form class="bg-gh-card border border-gh-border rounded-lg max-w-md w-full p-5" @click.stop @submit.prevent="confirmChangePassword()" autocomplete="off">
+    <h2 class="text-base font-semibold text-gh-text mb-1">Change password</h2>
+    <p class="text-xs text-gh-dim mb-4">Min 8 characters. 16+ skips class-mix; under 16 needs two of: lower/upper/digit/symbol.</p>
+    <label class="block text-xs text-gh-dim mb-1">Current password</label>
+    <!-- autocomplete=off + data-form-type=other suppresses Chrome's password-suggestion popover that misanchors inside fixed modals. -->
+    <input x-model="changePasswordModal.currentPassword" type="password" autocomplete="off" data-form-type="other"
+      class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm focus:border-gh-blue outline-none mb-3">
+    <label class="block text-xs text-gh-dim mb-1">New password</label>
+    <input x-model="changePasswordModal.newPassword" type="password" autocomplete="off" data-form-type="other"
+      class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm focus:border-gh-blue outline-none mb-3">
+    <label class="block text-xs text-gh-dim mb-1">Confirm new password</label>
+    <input x-model="changePasswordModal.confirmPassword" type="password" autocomplete="off" data-form-type="other"
+      class="w-full px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-bg text-gh-text text-sm focus:border-gh-blue outline-none">
+    <div x-show="changePasswordModal.error" class="mt-3 px-3 py-2 rounded-md border border-red-800 bg-red-900/20 text-gh-red text-xs" x-text="changePasswordModal.error"></div>
+    <div class="flex justify-end gap-2 mt-5">
+      <button type="button" @click="closeChangePasswordModal()" :disabled="changePasswordModal.busy" class="px-3 py-1.5 rounded-md border border-gh-border2 bg-gh-border text-gh-text text-xs hover:border-gh-blue transition disabled:opacity-40">Cancel</button>
+      <button type="submit" :disabled="changePasswordModal.busy" class="px-3 py-1.5 rounded-md border border-gh-blue bg-blue-900/30 text-gh-blue text-xs hover:bg-blue-900/50 transition disabled:opacity-40" x-text="changePasswordModal.busy ? 'Changing...' : 'Change password'"></button>
+    </div>
+  </form>
 </div>
 </body>
 </html>

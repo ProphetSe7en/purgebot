@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PurgeBot - First-run setup</title>
+  <link rel="stylesheet" href="/auth-assets/auth-shared.css">
+</head>
+<body>
+  <div class="card">
+    <h1>Set up PurgeBot</h1>
+    <p class="sub">No credentials are stored yet. Create an admin account to continue.</p>
+    <form id="form" autocomplete="off">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="off" required autofocus>
+      <div class="hint">Letters, digits, dot, underscore, hyphen. Max 64.</div>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="new-password" required>
+      <div class="hint">Min 8 chars. 16+ skips class-mix; under 16 needs two of: lower/upper/digit/symbol.</div>
+      <label for="confirm">Confirm password</label>
+      <input id="confirm" name="confirm" type="password" autocomplete="new-password" required>
+      <div id="err" class="err"></div>
+      <button id="submit" type="submit">Create account</button>
+    </form>
+  </div>
+  <script>
+    (function () {
+      const form = document.getElementById('form');
+      const submit = document.getElementById('submit');
+      const err = document.getElementById('err');
+      let token = '';
+      fetch('/api/auth/csrf').then(r => r.json()).then(d => { token = d.token; }).catch(() => {});
+      form.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        err.classList.remove('show');
+        const pw = document.getElementById('password').value;
+        const cf = document.getElementById('confirm').value;
+        if (pw !== cf) {
+          err.textContent = 'Passwords do not match';
+          err.classList.add('show');
+          return;
+        }
+        submit.disabled = true;
+        submit.textContent = 'Creating...';
+        try {
+          const r = await fetch('/api/auth/setup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+            body: JSON.stringify({
+              username: document.getElementById('username').value,
+              password: pw,
+            }),
+          });
+          if (r.ok) {
+            window.location.href = '/';
+            return;
+          }
+          const retryAfter = r.headers.get('Retry-After');
+          let msg = 'Setup failed';
+          try {
+            const j = await r.json();
+            msg = j.error || msg;
+          } catch (_) {}
+          if (r.status === 429 && retryAfter) {
+            msg = 'Too many attempts. Try again in ' + retryAfter + 's.';
+          }
+          err.textContent = msg;
+          err.classList.add('show');
+          try {
+            const j = await fetch('/api/auth/csrf').then(x => x.json());
+            token = j.token;
+          } catch (_) {}
+        } catch (e) {
+          err.textContent = 'Network error: ' + e.message;
+          err.classList.add('show');
+        } finally {
+          submit.disabled = false;
+          submit.textContent = 'Create account';
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

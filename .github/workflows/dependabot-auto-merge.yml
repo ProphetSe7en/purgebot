@@ -1,0 +1,67 @@
+name: Dependabot auto-merge
+
+# Auto-merge Dependabot PRs that match the policy below. Triggered on
+# every Dependabot-opened PR; the if-guards filter to only the
+# trust-classes we consider safe to auto-merge.
+#
+# Policy:
+#   github-actions: patch + minor  -> auto-merge if CI passes
+#   docker (base images): patch    -> auto-merge if CI passes
+#   npm (runtime modules): patch   -> auto-merge if CI passes
+#   everything else                -> manual review
+#
+# Auto-merge is not instant: "gh pr merge --auto" waits for the rest of
+# CI (npm audit + smoke test) to pass before squashing. If CI fails, the
+# PR stays open for manual review, and the reviewer has the full CI
+# window to cancel auto-merge if something looks off.
+#
+# Major bumps from any ecosystem stay manual: semver flags them as
+# potentially breaking. discord.js majors in particular have changed
+# intent semantics in past releases.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # Only Dependabot PRs. Regular contributor PRs always need human review.
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        # SHA-pinned per repo-wide GitHub Actions hardening rule. Dependabot
+        # itself opens a PR to bump this pin, which we auto-merge if it is
+        # a patch/minor per the policy below.
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Auto-merge github-actions patch + minor
+        if: |
+          steps.meta.outputs.package-ecosystem == 'github_actions' &&
+          (steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+           steps.meta.outputs.update-type == 'version-update:semver-minor')
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto-merge docker patch
+        if: |
+          steps.meta.outputs.package-ecosystem == 'docker' &&
+          steps.meta.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto-merge npm patch
+        if: |
+          steps.meta.outputs.package-ecosystem == 'npm_and_yarn' &&
+          steps.meta.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

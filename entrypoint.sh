@@ -14,10 +14,10 @@ umask "$UMASK"
 # Copy sample config on first run
 if [ -d /config ] && [ ! -f /config/config.yaml ]; then
   cp /app/config.yaml.sample /config/config.yaml
-  echo "Created default config at /config/config.yaml — edit it and run --sync"
+  echo "Created default config at /config/config.yaml - edit it and run --sync"
 fi
 
-# Fix ownership of config files (not recursive — avoids slow chown on large log dirs)
+# Fix ownership of config files (not recursive - avoids slow chown on large log dirs)
 if [ -d /config ]; then
   chown "$PUID":"$PGID" /config
   [ -f /config/config.yaml ] && chown "$PUID":"$PGID" /config/config.yaml

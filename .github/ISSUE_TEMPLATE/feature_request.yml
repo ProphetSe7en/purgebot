@@ -1,0 +1,36 @@
+name: Feature Request
+description: Suggest a new feature or improvement for PurgeBot
+labels: ['needs-triage']
+body:
+  - type: checkboxes
+    attributes:
+      label: Existing issue check
+      description: Please search open and closed issues first so we don't end up with duplicates.
+      options:
+        - label: I searched and didn't find an existing request for this
+          required: true
+  - type: textarea
+    attributes:
+      label: What problem are you trying to solve?
+      description: What's the pain point or limitation you're running into?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What would you like to happen?
+      description: Describe the feature or change you'd like to see.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Have you considered other approaches?
+      description: Other tools, workarounds, or alternative designs that came to mind.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Anything else
+      description: |
+        Screenshots, mockups, links to similar features in other tools - anything that helps. You can drag-and-drop images directly into this field.
+    validations:
+      required: false

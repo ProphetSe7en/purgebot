@@ -1,10 +1,10 @@
 # PurgeBot
 
-Automated message cleanup for Discord servers. Define retention policies per category and channel, and let PurgeBot handle the rest — on a schedule or on-demand via the built-in Web UI.
+Automated message cleanup for Discord servers. Define retention policies per category and channel, and let PurgeBot handle the rest - on a schedule or on-demand via the built-in Web UI.
 
 Built for servers with many channels (media automation, homelab, development) where messages pile up across dozens of categories and manual cleanup is impractical.
 
-> **Warning:** PurgeBot permanently deletes Discord messages. Deleted messages **cannot be recovered** — Discord does not have a recycle bin or undo function. Always start with `dryRun: true` (the default) and verify the dry-run output before enabling live deletion. Only channels explicitly listed in your config are processed (allow-list safety), but misconfiguration can still lead to unintended data loss. **Use at your own risk.** The authors are not responsible for any lost messages.
+> **Warning:** PurgeBot permanently deletes Discord messages. Deleted messages **cannot be recovered** - Discord does not have a recycle bin or undo function. Always start with `dryRun: true` (the default) and verify the dry-run output before enabling live deletion. Only channels explicitly listed in your config are processed (allow-list safety), but misconfiguration can still lead to unintended data loss. **Use at your own risk.** The authors are not responsible for any lost messages.
 
 ## Screenshots
 
@@ -23,33 +23,33 @@ Built for servers with many channels (media automation, homelab, development) wh
 ## Features
 
 ### Cleanup
-- **Hierarchical retention** — channel override > category default > global default
-- **Per-channel retention dropdown** — Default (inherit category), Skip (never delete), or Custom days. Shows effective delete range (>7d, 7-14d, etc.)
-- **Auto-discovery** — new channels and categories detected automatically after each scheduled run
-- **Allow-list safety** — only channels explicitly listed in config are processed
-- **Dry-run mode** — see what would be deleted before enabling live cleanup
-- **Purge All** — delete and recreate a channel to instantly clear all history, with webhook recreation and recovery safety net
-- **>14-day delete support** — individually deletes messages older than Discord's bulk-delete limit
-- **Cancel cleanup** — stop a running cleanup from any tab via the header Stop button
+- **Hierarchical retention** - channel override > category default > global default
+- **Per-channel retention dropdown** - Default (inherit category), Skip (never delete), or Custom days. Shows effective delete range (>7d, 7-14d, etc.)
+- **Auto-discovery** - new channels and categories detected automatically after each scheduled run
+- **Allow-list safety** - only channels explicitly listed in config are processed
+- **Dry-run mode** - see what would be deleted before enabling live cleanup
+- **Purge All** - delete and recreate a channel to instantly clear all history, with webhook recreation and recovery safety net
+- **>14-day delete support** - individually deletes messages older than Discord's bulk-delete limit
+- **Cancel cleanup** - stop a running cleanup from any tab via the header Stop button
 
 ### Discord Tools
-- **Channel & Category Sorting** — sort Discord server categories and channels alphabetically. Manual via Sort Now or automatic after scheduled cleanup. Per-category opt-in with pinned positions (lock to first, last, or specific position)
-- **Webhook Discovery** — browse all server webhooks grouped by category and channel, with optional scheduled scanning
+- **Channel & Category Sorting** - sort Discord server categories and channels alphabetically. Manual via Sort Now or automatic after scheduled cleanup. Per-category opt-in with pinned positions (lock to first, last, or specific position)
+- **Webhook Discovery** - browse all server webhooks grouped by category and channel, with optional scheduled scanning
 
 ### Web UI
-- **Centered layout** — clean, readable interface with sidebar Settings navigation
-- **Category grid overview** — fixed columns (Category, Deletes, Overrides, Cleanup, Sort, Pin) show feature status at a glance
-- **Settings sidebar** — Cleanup, Notifications, Schedule, Discord Tools, General
-- **Inline results** — run results appear directly in the UI
-- **Live log streaming** — SSE-based real-time log viewer with level filtering
-- **Statistics** — deletion history charts, category breakdown, top channels
+- **Centered layout** - clean, readable interface with sidebar Settings navigation
+- **Category grid overview** - fixed columns (Category, Deletes, Overrides, Cleanup, Sort, Pin) show feature status at a glance
+- **Settings sidebar** - Cleanup, Notifications, Schedule, Discord Tools, General
+- **Inline results** - run results appear directly in the UI
+- **Live log streaming** - SSE-based real-time log viewer with level filtering
+- **Statistics** - deletion history charts, category breakdown, top channels
 
 ### Infrastructure
-- **Scheduled cleanup** — cron-based scheduling with timezone support. Post-cleanup: auto-sync → webhook discovery → auto-sort
-- **Webhook notifications** — cleanup summaries, discovery alerts, and sort results to Discord + Gotify
-- **Hot-reload config** — edit config.yaml or use the Web UI — changes take effect on next run
-- **Atomic config writes** — write-to-temp then rename prevents corruption
-- **Docker-native** — PUID/PGID/UMASK, healthcheck, Alpine-based (~45 MB)
+- **Scheduled cleanup** - cron-based scheduling with timezone support. Post-cleanup: auto-sync → webhook discovery → auto-sort
+- **Webhook notifications** - cleanup summaries, discovery alerts, and sort results to Discord + Gotify
+- **Hot-reload config** - edit config.yaml or use the Web UI - changes take effect on next run
+- **Atomic config writes** - write-to-temp then rename prevents corruption
+- **Docker-native** - PUID/PGID/UMASK, healthcheck, Alpine-based (~45 MB)
 
 ## Quick Start
 
@@ -58,16 +58,28 @@ Built for servers with many channels (media automation, homelab, development) wh
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
 2. Click **New Application**, give it a name (e.g. "PurgeBot"), and create it
 3. Go to the **Bot** tab:
-   - Click **Reset Token** and copy the token — you'll need this as `DISCORD_TOKEN`
-   - Under **Privileged Gateway Intents**, enable **Message Content Intent**
+   - Click **Reset Token** and copy the token - you'll need this as `DISCORD_TOKEN`
+   - Under **Privileged Gateway Intents**: leave them all OFF. PurgeBot does NOT need `Message Content Intent`, `Server Members Intent`, or `Presence Intent`. Message bodies are read via REST when the bot scans channels, which requires only the Read Message History permission.
 4. Go to **OAuth2 > URL Generator**:
    - **Scopes:** select `bot`
-   - **Bot Permissions:** select `Administrator` (simplest — needed for private channels), or select only the permissions you need from the table below
+   - **Bot Permissions:** pick only the permissions you need (see the table below). Avoid granting `Administrator` - least-privilege keeps blast radius small if the token ever leaks.
 5. Copy the generated URL, open it in your browser, select your server, and authorize
+
+#### Gateway intents (what PurgeBot uses)
+
+| Intent | Privileged? | PurgeBot uses it? | Why |
+|--------|:---:|:---:|------|
+| `Guilds` | No | Yes | Tracks the configured guild, channels, categories |
+| `GuildMessages` | No | Yes | Receives message metadata for live cleanup awareness |
+| `MessageContent` | **Yes** | No | Not required - PurgeBot reads message content via REST during scheduled scans, gated by Read Message History |
+| `GuildMembers` | **Yes** | No | Not needed |
+| `GuildPresences` | **Yes** | No | Not needed |
+
+Leaving privileged intents off lets the bot stay below Discord's 75-server verification threshold without ever requesting them.
 
 #### Permissions by Feature
 
-Select `Administrator` for full access, or pick individual permissions based on which features you use:
+Pick individual permissions based on which features you use. `View Channels` is required for everything:
 
 | Feature | View Channels | Read Message History | Manage Messages | Manage Channels | Manage Webhooks | Manage Roles |
 |---------|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -77,7 +89,9 @@ Select `Administrator` for full access, or pick individual permissions based on 
 | **Webhook Discovery** | ✓ | | | | ✓ | |
 | **Channel & Category Sorting** | ✓ | | | ✓ | | |
 
-> **Note:** `View Channels` is required for all features. `Manage Roles` is only needed if Purge All should recreate permission overwrites on the new channel.
+> **Notes:**
+> - `Manage Roles` is only needed if Purge All should recreate permission overwrites on the new channel.
+> - **Do not grant `Administrator`.** It's wider than anything PurgeBot ever uses, and the bot also auto-leaves any guild it gets added to outside the configured `GUILD_ID` - Administrator on the wrong guild magnifies that risk window.
 
 > **Finding your Guild ID:** Enable Developer Mode in Discord (Settings > Advanced > Developer Mode), then right-click your server name and click "Copy Server ID". This is your `GUILD_ID`.
 
@@ -98,9 +112,9 @@ On first run, a default `config.yaml` is created in the config volume. Open the 
 
 ### 3. Initial Setup
 
-1. Open `http://your-host:3050` — the Web UI is available immediately
+1. Open `http://your-host:3050` - the Web UI is available immediately
 2. Wait for the bot to connect to Discord (green "Connected" badge in the header)
-3. Click **Sync Channels** in the Overview tab — this discovers all your categories and channels
+3. Click **Sync Channels** in the Overview tab - this discovers all your categories and channels
 4. Enable the categories you want cleaned and set retention periods
 5. Run a **Dry Run** to preview what would be deleted
 6. When satisfied, set `dryRun: false` in the Configuration tab
@@ -126,15 +140,22 @@ Unified dry-run/live toggle with cancel support. Select a category or run all, s
 
 ### Sync Tab
 
-Channel discovery — detects new categories and channels on your Discord server. Shows per-change details with add/remove indicators. Existing config and overrides are preserved.
+Channel discovery - detects new categories and channels on your Discord server. Shows per-change details with add/remove indicators. Existing config and overrides are preserved.
 
 ### Statistics Tab
 
 Lifetime stats, per-run history, messages-over-time chart, category breakdown (doughnut), and top channels (bar chart). Toggle between "Last Run" and "All Time" views.
 
-### Configuration Tab
+### Settings Tab
 
-Global settings: default retention, dry-run toggle, skip pinned, rate limits, webhook URLs, and display preferences (time format, log retention).
+Sidebar-organised settings:
+
+- **Cleanup** - retention defaults, dry-run toggle, skip pinned, message rules (advanced), rate-limit knobs.
+- **Notifications** - Discord webhook URLs (cleanup + info) and Gotify push.
+- **Schedule** - cron expression with human-readable preview.
+- **Discord Tools** - webhook discovery, alphabetical sorting, permission checker.
+- **General** - time format, log retention.
+- **Security** - current auth posture, API key (Show/Hide/Copy/Rotate), change password. See the [Security](#security) section below.
 
 ### Schedule Tab
 
@@ -142,11 +163,13 @@ Enable/disable scheduled cleanup and edit the cron expression with a human-reada
 
 ### Logs Tab
 
-Real-time log streaming via Server-Sent Events. Filter by level (INFO/WARN/ERROR), search text, or browse historical log files by date. Newest entries appear first.
+Real-time runtime log streaming via Server-Sent Events. Filter by level (INFO/WARN/ERROR), search text, or browse historical log files by date. Newest entries appear first.
+
+The separate **audit log** (`/config/logs/audit-*.log`) records security-relevant events as JSON-lines for forensic review - see [Audit log](#audit-log) under Security.
 
 ## Configuration
 
-Configuration lives in `/config/config.yaml` (inside the Docker volume). You can edit it manually or use the Web UI — the bot re-reads config before each cleanup run.
+Configuration lives in `/config/config.yaml` (inside the Docker volume). You can edit it manually or use the Web UI - the bot re-reads config before each cleanup run.
 
 ### Retention Hierarchy
 
@@ -225,8 +248,8 @@ PurgeBot can send cleanup summaries and auto-discovery alerts to Discord via web
 1. In Discord, right-click a channel > **Edit Channel** > **Integrations** > **Webhooks** > **New Webhook**
 2. Copy the webhook URL
 3. Add it to config:
-   - `webhooks.cleanup` — receives an embed per category after each cleanup run (shows channels processed and messages deleted)
-   - `webhooks.info` — receives notifications when new categories or channels are discovered on your server
+   - `webhooks.cleanup` - receives an embed per category after each cleanup run (shows channels processed and messages deleted)
+   - `webhooks.info` - receives notifications when new categories or channels are discovered on your server
 
 You can use the same webhook URL for both, or separate channels for different notification types.
 
@@ -247,12 +270,15 @@ Use **Sync Channels** in the Web UI or run `--sync` from the CLI for a full reco
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DISCORD_TOKEN` | Yes | — | Bot token from Discord Developer Portal |
-| `GUILD_ID` | Yes | — | Discord server (guild) ID |
+| `DISCORD_TOKEN` | Yes | - | Bot token from Discord Developer Portal |
+| `GUILD_ID` | Yes | - | Discord server (guild) ID |
 | `TZ` | No | `UTC` | Container timezone |
 | `PUID` | No | `99` | User ID for file ownership |
 | `PGID` | No | `100` | Group ID for file ownership |
 | `UMASK` | No | `002` | File creation mask |
+| `AUTH_REQUIRED` | No | `disabled_for_local_addresses` | `enabled` forces login for every visitor. `disabled_for_local_addresses` lets LAN IPs through without login. |
+| `TRUSTED_NETWORKS` | No | loopback + RFC1918 + link-local + ULA | Comma-separated CIDRs that bypass auth in the default mode. Setting this env var locks the value (UI cannot change it). |
+| `TRUSTED_PROXIES` | No | - | Comma-separated CIDRs whose `X-Forwarded-For` headers are honoured. Set this if PurgeBot sits behind a reverse proxy. Env-set values are locked from UI edits. |
 
 ### Volumes
 
@@ -304,7 +330,7 @@ The container includes a built-in healthcheck that verifies the bot has run succ
 
 ### Unraid
 
-**Install via Community Apps:** Search for **purgebot** in the Apps tab — click Install and configure your settings.
+**Install via Community Apps:** Search for **purgebot** in the Apps tab - click Install and configure your settings.
 
 **Or install manually:** Go to **Docker** → **Add Container**, set Repository to `ghcr.io/prophetse7en/purgebot:latest`, and add the required paths, ports, and variables (see above).
 
@@ -349,7 +375,7 @@ The Web UI communicates via a REST API. All state-changing requests require the 
 
 ## Architecture
 
-Single Node.js process — Express runs in the same process as the Discord bot, sharing the live config object and Discord client directly.
+Single Node.js process - Express runs in the same process as the Discord bot, sharing the live config object and Discord client directly.
 
 ```
 src/
@@ -369,19 +395,60 @@ src/
 
 **Key design decisions:**
 - Express starts before Discord login (UI available immediately, API returns 503 if not connected)
-- Config reference stability — clear+assign pattern keeps exported object reference valid across reloads
-- Atomic writes — all config changes write to `.tmp` then rename
+- Config reference stability - clear+assign pattern keeps exported object reference valid across reloads
+- Atomic writes - all config changes write to `.tmp` then rename
 - SSE with EventEmitter bridge for real-time log streaming
 - Stats persisted to `/config/stats.json` (last 90 runs)
 
-## Security Notes
+## Security
 
-The Web UI has no authentication — anyone with network access to port 3050 can view config and trigger runs. This is standard for homelab tools (Sonarr, Radarr, etc.) but you should:
+PurgeBot ships with a Radarr-style auth posture: LAN visitors pass through without login by default, external visitors must sign in. Override the trust list or force-login mode via env vars (see [Environment Variables](#environment-variables)).
 
-- Only expose port 3050 on your local network
-- Use a reverse proxy with authentication if exposing externally
-- The API config endpoint can expose webhook URLs — treat port 3050 as a trusted interface
-- The Discord bot token is passed via environment variable and never exposed through the API
+### Web UI authentication
+
+- **First-run setup.** When no admin account exists, visiting the UI from outside LAN bypass redirects to `/setup`. From inside LAN bypass, visit `/setup` manually to opt in.
+- **Login.** Bcrypt-hashed password, session cookie signed with a per-install secret. Sessions persist across container restarts. 30-day TTL.
+- **Brute-force protection.** Token-bucket rate-limit on `/login`, `/setup`, `/api/auth/api-key/rotate`, and `/api/auth/change-password` - 5 attempts then 1 attempt per minute.
+- **CSRF protection.** Per-session token verified via `X-CSRF-Token` header on every state-changing request. Anonymous flows use cookie double-submit.
+- **Credential masking.** Webhook URLs and Gotify token are masked in `/api/config` responses; saving them back unchanged keeps the stored value.
+
+### API key for headless clients
+
+Each install gets a randomly generated 32-byte API key shown in **Settings → Security**. Send it as `X-API-Key: <key>` header (or `?apiKey=<key>` query string) to bypass session auth for scripts, Homepage widgets, or other automation. Rotate from the same panel.
+
+### Audit log
+
+Every security-relevant event is written as JSON-lines to `/config/logs/audit-YYYY-MM-DD.log` (mode 600). Includes login attempts, config writes, manual cleanup triggers, Discord deletes per channel, sort moves, and guild-allowlist violations.
+
+```bash
+# Recent auth events
+tail /config/logs/audit-$(date +%Y-%m-%d).log | jq 'select(.event | startswith("auth."))'
+
+# What got deleted today
+jq 'select(.event == "discord.delete_batch")' /config/logs/audit-$(date +%Y-%m-%d).log
+```
+
+Audit log rotation follows `logging.maxDays` (default 30 days).
+
+### Discord-side safety
+
+- `Administrator` permission is NOT required (see [Permissions by Feature](#permissions-by-feature)).
+- The bot leaves any guild it gets added to outside the configured `GUILD_ID` immediately.
+- Outbound webhook URLs are validated against `discord.com`/`discordapp.com` on every send. Gotify URLs are validated as `http(s)://`.
+- Discord bot token is read from `DISCORD_TOKEN` env and never written to `config.yaml` or any API response.
+
+### What lives in `/config`
+
+| Path | Mode | What |
+|------|------|------|
+| `/config/config.yaml` | 0644 | Categories, retention, schedule, webhooks (URLs masked when returned by API) |
+| `/config/auth.json` | 0600 | Username, bcrypt password hash, API key |
+| `/config/sessions.json` | 0600 | Active session cookies (regenerated on logout) |
+| `/config/session-secret` | 0600 | Per-install HMAC secret for cookie signing |
+| `/config/logs/purgebot-*.log` | umask default | Runtime log |
+| `/config/logs/audit-*.log` | 0600 | Security audit log |
+
+If you mount `/config` as an SMB share, set it to **Secure** or **Private** - file modes don't protect against an SMB client running as the share's superuser.
 
 ## Disclaimer
 

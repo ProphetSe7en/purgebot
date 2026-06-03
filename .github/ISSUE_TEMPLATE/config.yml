@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report (private)
+    url: https://github.com/prophetse7en/purgebot/security/advisories/new
+    about: Report a vulnerability privately. See SECURITY.md for the disclosure process.

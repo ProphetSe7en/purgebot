@@ -1,0 +1,9 @@
+# gitleaks ignore - false-positive allowlist.
+# Format: <commit-sha>:<file>:<rule>:<line>
+#
+# Entries below are baseline placeholders. Real secrets must never land here.
+# When CI gitleaks lands and flags entries, evaluate each: synthetic ->
+# add here with a rationale comment; real -> rotate the secret first,
+# then allowlist the historical fingerprint.
+
+# (No entries yet - baseline established on first push.)

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PurgeBot - Sign in</title>
+  <link rel="stylesheet" href="/auth-assets/auth-shared.css">
+</head>
+<body>
+  <div class="card">
+    <h1>Sign in to PurgeBot</h1>
+    <p class="sub">Web UI is locked. Enter your credentials.</p>
+    <form id="form" autocomplete="on">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <div id="err" class="err"></div>
+      <button id="submit" type="submit">Sign in</button>
+    </form>
+    <div class="foot">Need to reset? Remove <code>auth.json</code> from the config directory.</div>
+  </div>
+  <script>
+    (function () {
+      const form = document.getElementById('form');
+      const submit = document.getElementById('submit');
+      const err = document.getElementById('err');
+      let token = '';
+      fetch('/api/auth/csrf').then(r => r.json()).then(d => { token = d.token; }).catch(() => {});
+      form.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        err.classList.remove('show');
+        submit.disabled = true;
+        submit.textContent = 'Signing in...';
+        try {
+          const r = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+            body: JSON.stringify({
+              username: document.getElementById('username').value,
+              password: document.getElementById('password').value,
+            }),
+          });
+          if (r.ok) {
+            window.location.href = '/';
+            return;
+          }
+          const retryAfter = r.headers.get('Retry-After');
+          let msg = 'Sign-in failed';
+          try {
+            const j = await r.json();
+            msg = j.error || msg;
+          } catch (_) {}
+          if (r.status === 429 && retryAfter) {
+            msg = 'Too many attempts. Try again in ' + retryAfter + 's.';
+          }
+          err.textContent = msg;
+          err.classList.add('show');
+          // Refresh CSRF if server rotated it on the 4xx response.
+          try {
+            const j = await fetch('/api/auth/csrf').then(x => x.json());
+            token = j.token;
+          } catch (_) {}
+        } catch (e) {
+          err.textContent = 'Network error: ' + e.message;
+          err.classList.add('show');
+        } finally {
+          submit.disabled = false;
+          submit.textContent = 'Sign in';
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

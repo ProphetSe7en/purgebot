@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const bot = require('../../bot');
 
-// GET /api/webhooks — fetch all guild webhooks grouped by category/channel
+// GET /api/webhooks - fetch all guild webhooks grouped by category/channel
 router.get('/', async (req, res) => {
   if (!bot.client.isReady()) {
     return res.status(503).json({ error: 'Discord bot is not connected' });

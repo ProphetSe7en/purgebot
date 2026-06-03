@@ -1,0 +1,67 @@
+version: 2
+
+updates:
+  # npm dependency updates. Surfaces CVE-fix bumps for our runtime + dev
+  # dependencies (express, discord.js, bcrypt, express-session, etc.) as
+  # PRs we review weekly. Grouped into one PR per week so a quiet week is
+  # one PR, not five.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    groups:
+      npm-deps:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+      - nodejs
+    commit-message:
+      prefix: deps
+      include: scope
+
+  # GitHub Actions updates. Keeps the workflow actions current with
+  # security advisories. Combined with SHA-pinning this surfaces version
+  # bumps as PRs (the SHA and comment both refresh) instead of trusting a
+  # floating major tag to silently update. Grouped into one PR per week.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: ci
+      include: scope
+
+  # Dockerfile base-image updates. Alerts on the Node base image bumps.
+  # Not auto-merged (manual review for stability), but we want to see them.
+  # Grouped into one PR per week.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 3
+    groups:
+      docker:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: deps(docker)
+      include: scope

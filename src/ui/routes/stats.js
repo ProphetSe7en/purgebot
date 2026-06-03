@@ -3,7 +3,7 @@ const fs = require('fs');
 const router = express.Router();
 const bot = require('../../bot');
 
-// GET /api/stats — persisted cleanup stats
+// GET /api/stats - persisted cleanup stats
 router.get('/', (req, res) => {
   try {
     if (fs.existsSync(bot.STATS_PATH)) {
@@ -17,7 +17,7 @@ router.get('/', (req, res) => {
   }
 });
 
-// GET /api/stats/status — live bot status
+// GET /api/stats/status - live bot status
 router.get('/status', (req, res) => {
   const cfg = bot.config;
   const connected = bot.client.isReady();

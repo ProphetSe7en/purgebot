@@ -3,14 +3,15 @@ const yaml = require('js-yaml');
 const fs = require('fs');
 const router = express.Router();
 const bot = require('../../bot');
+const audit = require('../audit');
 
-// GET /api/config — full config as JSON (excludes internal keys)
+// GET /api/config - full config as JSON (excludes internal keys, masks credentials)
 router.get('/', (req, res) => {
   const { _discoveryComplete, timezone, ...rest } = bot.config;
-  res.json(rest);
+  res.json(bot.maskedConfigSnapshot(rest));
 });
 
-// PUT /api/config — replace full config
+// PUT /api/config - replace full config
 router.put('/', (req, res) => {
   try {
     const newConfig = req.body;
@@ -43,6 +44,21 @@ router.put('/', (req, res) => {
       }
     }
 
+    // Resolve masked credentials against current stored values. A submitted
+    // mask sentinel means "keep what's already stored"; any other value is
+    // treated as a deliberate change.
+    if (newConfig.webhooks && typeof newConfig.webhooks === 'object') {
+      if (newConfig.webhooks.cleanup !== undefined) {
+        newConfig.webhooks.cleanup = bot.resolveMaskedCredential(newConfig.webhooks.cleanup, bot.config.webhooks?.cleanup);
+      }
+      if (newConfig.webhooks.info !== undefined) {
+        newConfig.webhooks.info = bot.resolveMaskedCredential(newConfig.webhooks.info, bot.config.webhooks?.info);
+      }
+    }
+    if (newConfig.gotify && typeof newConfig.gotify === 'object' && newConfig.gotify.token !== undefined) {
+      newConfig.gotify.token = bot.resolveMaskedCredential(newConfig.gotify.token, bot.config.gotify?.token);
+    }
+
     const yamlStr = yaml.dump(newConfig, { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false });
     const tmpPath = bot.CONFIG_PATH + '.tmp';
     fs.writeFileSync(tmpPath, bot.CONFIG_HEADER + yamlStr, 'utf8');
@@ -53,6 +69,10 @@ router.put('/', (req, res) => {
     bot.loadConfig(false);
     bot.setupCron();
     bot.log('INFO', 'Config updated via Web UI');
+    audit.record('config.write', {
+      actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+      details: { method: 'PUT', scope: 'full', fields: Object.keys(newConfig || {}) },
+    });
 
     res.json({ ok: true });
   } catch (err) {
@@ -60,7 +80,7 @@ router.put('/', (req, res) => {
   }
 });
 
-// PATCH /api/config/global — update global settings
+// PATCH /api/config/global - update global settings
 router.patch('/global', (req, res) => {
   try {
     const updates = req.body;
@@ -74,7 +94,7 @@ router.patch('/global', (req, res) => {
       }
       cfg.schedule = String(updates.schedule);
     }
-    // timezone is read-only (from TZ env var) — ignore if sent
+    // timezone is read-only (from TZ env var) - ignore if sent
     if (updates.globalDefault !== undefined) {
       if (typeof updates.globalDefault !== 'number' || !Number.isInteger(updates.globalDefault) || updates.globalDefault < -1) {
         return res.status(400).json({ error: 'globalDefault must be integer >= -1' });
@@ -96,8 +116,12 @@ router.patch('/global', (req, res) => {
     }
     if (updates.webhooks !== undefined && typeof updates.webhooks === 'object') {
       if (!cfg.webhooks) cfg.webhooks = {};
-      if (updates.webhooks.cleanup !== undefined) cfg.webhooks.cleanup = String(updates.webhooks.cleanup || '');
-      if (updates.webhooks.info !== undefined) cfg.webhooks.info = String(updates.webhooks.info || '');
+      if (updates.webhooks.cleanup !== undefined) {
+        cfg.webhooks.cleanup = bot.resolveMaskedCredential(String(updates.webhooks.cleanup || ''), cfg.webhooks.cleanup);
+      }
+      if (updates.webhooks.info !== undefined) {
+        cfg.webhooks.info = bot.resolveMaskedCredential(String(updates.webhooks.info || ''), cfg.webhooks.info);
+      }
       if (updates.webhooks.cleanupColor !== undefined) cfg.webhooks.cleanupColor = String(updates.webhooks.cleanupColor || '#238636');
       if (updates.webhooks.infoColor !== undefined) cfg.webhooks.infoColor = String(updates.webhooks.infoColor || '#f39c12');
       if (updates.webhooks.discovery !== undefined) cfg.webhooks.discovery = !!updates.webhooks.discovery;
@@ -106,7 +130,9 @@ router.patch('/global', (req, res) => {
       if (!cfg.gotify) cfg.gotify = {};
       if (updates.gotify.enabled !== undefined) cfg.gotify.enabled = !!updates.gotify.enabled;
       if (updates.gotify.url !== undefined) cfg.gotify.url = String(updates.gotify.url || '').replace(/\/+$/, '');
-      if (updates.gotify.token !== undefined) cfg.gotify.token = String(updates.gotify.token || '');
+      if (updates.gotify.token !== undefined) {
+        cfg.gotify.token = bot.resolveMaskedCredential(String(updates.gotify.token || ''), cfg.gotify.token);
+      }
       if (updates.gotify.priorityWarning !== undefined) cfg.gotify.priorityWarning = !!updates.gotify.priorityWarning;
       if (updates.gotify.warningValue !== undefined) cfg.gotify.warningValue = Math.max(0, Math.floor(Number(updates.gotify.warningValue) || 0));
       if (updates.gotify.priorityInfo !== undefined) cfg.gotify.priorityInfo = !!updates.gotify.priorityInfo;
@@ -133,13 +159,17 @@ router.patch('/global', (req, res) => {
     }
 
     bot.log('INFO', 'Global config updated via Web UI');
+    audit.record('config.write', {
+      actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+      details: { method: 'PATCH', scope: 'global', fields: Object.keys(updates || {}) },
+    });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST /api/config/test-webhook — send a test message to a webhook URL
+// POST /api/config/test-webhook - send a test message to a webhook URL
 router.post('/test-webhook', async (req, res) => {
   try {
     const { type, url } = req.body;
@@ -149,12 +179,18 @@ router.post('/test-webhook', async (req, res) => {
     if (!['cleanup', 'info'].includes(type)) {
       return res.status(400).json({ error: 'Type must be "cleanup" or "info"' });
     }
-    if (!/^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\//.test(url)) {
+    // If the UI sends the mask sentinel (user wants to test the stored URL
+    // without re-entering it), resolve to the current stored value.
+    const resolvedUrl = bot.resolveMaskedCredential(String(url), bot.config.webhooks?.[type]);
+    if (!resolvedUrl) {
+      return res.status(400).json({ error: 'No webhook URL configured to test' });
+    }
+    if (!bot.isAllowedDiscordWebhookUrl(resolvedUrl)) {
       return res.status(400).json({ error: 'URL must be a Discord webhook URL' });
     }
 
     const embed = {
-      title: type === 'cleanup' ? 'PurgeBot — Webhook Test' : 'PurgeBot — Info Webhook Test',
+      title: type === 'cleanup' ? 'PurgeBot - Webhook Test' : 'PurgeBot - Info Webhook Test',
       description: type === 'cleanup'
         ? 'This is a test message from PurgeBot. Cleanup summaries will appear here after each run.'
         : 'This is a test message from PurgeBot. Auto-discovery notifications will appear here when new channels are found.',
@@ -165,7 +201,7 @@ router.post('/test-webhook', async (req, res) => {
       timestamp: new Date().toISOString(),
     };
 
-    const r = await fetch(url, {
+    const r = await fetch(resolvedUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ embeds: [embed] }),
@@ -173,10 +209,14 @@ router.post('/test-webhook', async (req, res) => {
 
     if (r.ok || r.status === 204) {
       bot.log('INFO', `Test ${type} webhook sent successfully`);
+      audit.record('config.webhook_test', {
+        actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+        details: { type, hostPrefix: (new URL(resolvedUrl)).host },
+      });
       res.json({ ok: true });
     } else {
       const body = await r.text().catch(() => '');
-      bot.log('WARN', `Test ${type} webhook failed: ${r.status} — ${body}`);
+      bot.log('WARN', `Test ${type} webhook failed: ${r.status} - ${body}`);
       res.status(400).json({ error: `Discord returned ${r.status}: ${body || 'Unknown error'}` });
     }
   } catch (err) {
@@ -184,23 +224,33 @@ router.post('/test-webhook', async (req, res) => {
   }
 });
 
-// POST /api/config/test-gotify — send a test message to Gotify
+// POST /api/config/test-gotify - send a test message to Gotify
 router.post('/test-gotify', async (req, res) => {
   try {
     const { url, token } = req.body;
     if (!url || !token) {
       return res.status(400).json({ error: 'Missing url or token' });
     }
-    const gotifyUrl = url.replace(/\/+$/, '');
+    // Resolve mask sentinels against stored values so the user can test
+    // the saved Gotify URL/token without re-entering them.
+    const resolvedUrlRaw = bot.resolveMaskedCredential(String(url), bot.config.gotify?.url);
+    const resolvedToken = bot.resolveMaskedCredential(String(token), bot.config.gotify?.token);
+    if (!resolvedUrlRaw || !resolvedToken) {
+      return res.status(400).json({ error: 'No Gotify URL/token configured to test' });
+    }
+    if (!bot.isAllowedGotifyUrl(resolvedUrlRaw)) {
+      return res.status(400).json({ error: 'URL must be a valid http(s) URL' });
+    }
+    const gotifyUrl = resolvedUrlRaw.replace(/\/+$/, '');
 
     const payload = {
-      title: 'PurgeBot — Test',
+      title: 'PurgeBot - Test',
       message: 'This is a test message from PurgeBot. Cleanup summaries and auto-discovery notifications will appear here.',
       priority: 5,
       extras: { 'client::display': { contentType: 'text/markdown' } },
     };
 
-    const r = await fetch(`${gotifyUrl}/message?token=${encodeURIComponent(token)}`, {
+    const r = await fetch(`${gotifyUrl}/message?token=${encodeURIComponent(resolvedToken)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -208,10 +258,14 @@ router.post('/test-gotify', async (req, res) => {
 
     if (r.ok) {
       bot.log('INFO', 'Test Gotify message sent successfully');
+      audit.record('config.gotify_test', {
+        actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+        details: { hostPrefix: (new URL(gotifyUrl)).host },
+      });
       res.json({ ok: true });
     } else {
       const body = await r.text().catch(() => '');
-      bot.log('WARN', `Test Gotify message failed: ${r.status} — ${body}`);
+      bot.log('WARN', `Test Gotify message failed: ${r.status} - ${body}`);
       res.status(400).json({ error: `Gotify returned ${r.status}: ${body || 'Unknown error'}` });
     }
   } catch (err) {
@@ -219,7 +273,7 @@ router.post('/test-gotify', async (req, res) => {
   }
 });
 
-// PATCH /api/config/category/:name — update single category
+// PATCH /api/config/category/:name - update single category
 router.patch('/category/:name', (req, res) => {
   try {
     const catName = req.params.name;
@@ -262,6 +316,10 @@ router.patch('/category/:name', (req, res) => {
     bot.fixOwnership(bot.CONFIG_PATH);
 
     bot.log('INFO', `Category "${catName}" updated via Web UI`);
+    audit.record('config.write', {
+      actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+      details: { method: 'PATCH', scope: 'category', category: catName, fields: Object.keys(updates || {}) },
+    });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

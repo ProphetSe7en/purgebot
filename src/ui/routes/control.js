@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const bot = require('../../bot');
+const audit = require('../audit');
 
 // Guard: reject if cleanup, sync, or purge-all already running
 let syncRunning = false;
 let purgeAllRunning = false;
 
-// POST /api/cleanup/run — trigger cleanup (optional: {category} for single-category run)
+// POST /api/cleanup/run - trigger cleanup (optional: {category} for single-category run)
 router.post('/run', (req, res) => {
   if (!bot.client.isReady()) {
     return res.status(503).json({ error: 'Discord not connected' });
@@ -16,13 +17,64 @@ router.post('/run', (req, res) => {
   }
 
   const { category, channel } = req.body || {};
+  const label = channel ? `#${channel}` : (category || 'all');
+  // Record-then-dispatch so per-channel discord.delete_batch entries always
+  // come after the cleanup.manual_trigger that explains who requested them.
+  audit.record('cleanup.manual_trigger', {
+    actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+    details: { mode: 'live', scope: label },
+  });
   bot.runCleanup({ forceLive: true, trigger: 'manual', categoryFilter: category || null, channelFilter: channel || null })
     .catch(err => bot.log('ERROR', `UI-triggered cleanup failed: ${err.message}`));
-  const label = channel ? `#${channel}` : (category || 'all');
   res.json({ ok: true, message: `Cleanup started for ${label}` });
 });
 
-// POST /api/cleanup/sync — trigger channel sync (synchronous — returns result)
+// POST /api/cleanup/run-rule - trigger cleanup using ONLY a single rule.
+// Body: { scope: 'global'|'category', categoryName?: string, ruleIdx: number, dryRun: bool }
+// Bypasses retention (treated as -1) so the result is purely the rule's effect.
+router.post('/run-rule', (req, res) => {
+  if (!bot.client.isReady()) {
+    return res.status(503).json({ error: 'Discord not connected' });
+  }
+  if (bot.isCleanupRunning() || syncRunning) {
+    return res.status(409).json({ error: 'Cleanup or sync already running' });
+  }
+  const { scope, categoryName, ruleIdx, dryRun } = req.body || {};
+  if (scope !== 'global' && scope !== 'category') {
+    return res.status(400).json({ error: 'scope must be "global" or "category"' });
+  }
+  if (scope === 'category' && (typeof categoryName !== 'string' || !categoryName)) {
+    return res.status(400).json({ error: 'categoryName is required when scope is "category"' });
+  }
+  if (typeof ruleIdx !== 'number' || ruleIdx < 0 || !Number.isInteger(ruleIdx)) {
+    return res.status(400).json({ error: 'ruleIdx must be a non-negative integer' });
+  }
+  let targetRule;
+  if (scope === 'global') {
+    targetRule = bot.config.rules?.[ruleIdx];
+  } else {
+    const cat = bot.config.categories?.[categoryName];
+    if (!cat) return res.status(404).json({ error: `Category "${categoryName}" not found` });
+    targetRule = cat.rules?.[ruleIdx];
+  }
+  if (!targetRule) {
+    return res.status(404).json({ error: 'Rule not found at that index' });
+  }
+  const ruleOnly = { scope, categoryName: scope === 'category' ? categoryName : null, ruleIdx };
+  audit.record('cleanup.rule_trigger', {
+    actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+    details: { scope, categoryName: categoryName || null, ruleIdx, dryRun: !!dryRun },
+  });
+  bot.runCleanup({
+    [dryRun ? 'forceDryRun' : 'forceLive']: true,
+    trigger: 'manual',
+    ruleOnly,
+  }).catch(err => bot.log('ERROR', `UI-triggered rule run failed: ${err.message}`));
+  const label = scope === 'global' ? 'global rule' : `${categoryName} rule`;
+  res.json({ ok: true, message: `${dryRun ? 'Dry run' : 'Live run'} started for ${label}` });
+});
+
+// POST /api/cleanup/sync - trigger channel sync (synchronous - returns result)
 router.post('/sync', async (req, res) => {
   if (!bot.client.isReady()) {
     return res.status(503).json({ error: 'Discord not connected' });
@@ -32,6 +84,9 @@ router.post('/sync', async (req, res) => {
   }
 
   syncRunning = true;
+  audit.record('cleanup.sync_request', {
+    actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+  });
   try {
     const result = await bot.syncConfig({ exitOnError: false });
     bot.log('INFO', 'UI-triggered sync complete');
@@ -44,7 +99,7 @@ router.post('/sync', async (req, res) => {
   }
 });
 
-// POST /api/cleanup/dryrun — force dry-run cleanup
+// POST /api/cleanup/dryrun - force dry-run cleanup
 router.post('/dryrun', (req, res) => {
   if (!bot.client.isReady()) {
     return res.status(503).json({ error: 'Discord not connected' });
@@ -54,13 +109,17 @@ router.post('/dryrun', (req, res) => {
   }
 
   const { category, channel } = req.body || {};
+  audit.record('cleanup.manual_trigger', {
+    actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+    details: { mode: 'dryrun', scope: channel ? `#${channel}` : (category || 'all') },
+  });
   bot.runCleanup({ forceDryRun: true, trigger: 'manual', categoryFilter: category || null, channelFilter: channel || null })
     .catch(err => bot.log('ERROR', `UI-triggered dry-run failed: ${err.message}`));
   const label = channel ? `#${channel}` : (category || 'all');
   res.json({ ok: true, message: `Dry-run started for ${label}` });
 });
 
-// POST /api/cleanup/purge-all — delete and recreate a channel (manual only)
+// POST /api/cleanup/purge-all - delete and recreate a channel (manual only)
 router.post('/purge-all', async (req, res) => {
   if (!bot.client.isReady()) {
     return res.status(503).json({ error: 'Discord not connected' });
@@ -75,6 +134,10 @@ router.post('/purge-all', async (req, res) => {
   }
 
   purgeAllRunning = true;
+  audit.record('cleanup.purge_all_request', {
+    actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+    details: { category, channel, channelId: channelId || null },
+  });
   try {
     const result = await bot.purgeAllChannel(category, channel, channelId || null);
     bot.log('INFO', `UI-triggered Purge All complete for #${channel}`);
@@ -91,7 +154,7 @@ router.post('/purge-all', async (req, res) => {
   }
 });
 
-// GET /api/cleanup/resolve-channels?category=Name — return channels with IDs for a category
+// GET /api/cleanup/resolve-channels?category=Name - return channels with IDs for a category
 router.get('/resolve-channels', async (req, res) => {
   if (!bot.client.isReady()) {
     return res.status(503).json({ error: 'Discord not connected' });
@@ -108,21 +171,25 @@ router.get('/resolve-channels', async (req, res) => {
   }
 });
 
-// POST /api/cleanup/cancel — cancel a running cleanup
+// POST /api/cleanup/cancel - cancel a running cleanup
 router.post('/cancel', (req, res) => {
   if (!bot.isCleanupRunning()) {
     return res.status(409).json({ error: 'No cleanup running' });
   }
   const cancelled = bot.cancelCleanup();
+  audit.record('cleanup.cancel_request', {
+    actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+    details: { cancelled },
+  });
   res.json({ ok: cancelled });
 });
 
-// GET /api/cleanup/recovery — list recovery snapshots
+// GET /api/cleanup/recovery - list recovery snapshots
 router.get('/recovery', (req, res) => {
   res.json(bot.listRecoveryFiles());
 });
 
-// POST /api/cleanup/recover — recreate a channel from a recovery snapshot
+// POST /api/cleanup/recover - recreate a channel from a recovery snapshot
 router.post('/recover', async (req, res) => {
   if (!bot.client.isReady()) {
     return res.status(503).json({ error: 'Discord not connected' });
@@ -141,6 +208,10 @@ router.post('/recover', async (req, res) => {
   }
 
   purgeAllRunning = true;
+  audit.record('cleanup.recover_request', {
+    actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+    details: { file },
+  });
   try {
     const result = await bot.recoverChannel(file);
     bot.log('INFO', `UI-triggered recovery complete for #${result.channelName}`);
@@ -153,7 +224,7 @@ router.post('/recover', async (req, res) => {
   }
 });
 
-// POST /api/cleanup/sort — sort channels/categories alphabetically
+// POST /api/cleanup/sort - sort channels/categories alphabetically
 let sortRunning = false;
 router.post('/sort', async (req, res) => {
   if (!bot.client.isReady()) {
@@ -165,10 +236,14 @@ router.post('/sort', async (req, res) => {
 
   const { mode = 'both', dryRun = false, skipCategories = [], includeVoice = false, pinnedPositions = {} } = req.body || {};
   if (!['categories', 'channels', 'both'].includes(mode)) {
-    return res.status(400).json({ error: 'Invalid mode — use categories, channels, or both' });
+    return res.status(400).json({ error: 'Invalid mode - use categories, channels, or both' });
   }
 
   sortRunning = true;
+  audit.record('cleanup.sort_request', {
+    actor: audit.actorFromReq(req), ip: req.authContext?.ip,
+    details: { mode, dryRun, skipCount: Array.isArray(skipCategories) ? skipCategories.length : 0, includeVoice },
+  });
   try {
     const results = await bot.sortServer({ mode, dryRun, skipChannelsInCategories: skipCategories, includeVoice, pinnedPositions });
     res.json(results);
@@ -180,7 +255,7 @@ router.post('/sort', async (req, res) => {
   }
 });
 
-// GET /api/cleanup/permissions — check bot permissions
+// GET /api/cleanup/permissions - check bot permissions
 router.get('/permissions', (req, res) => {
   if (!bot.client.isReady()) {
     return res.status(503).json({ error: 'Discord not connected' });

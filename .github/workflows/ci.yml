@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    name: node -c syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - name: install (no scripts, no audit)
+        # --ignore-scripts skips bcrypt's node-gyp build attempt - we don't
+        # actually run anything that needs the native binding, only require()
+        # for syntax checking.
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: syntax check every .js under src/
+        # node -c parses the file but does not execute it. Catches typos and
+        # accidental top-level breakage without needing a Discord bot token.
+        run: |
+          set -euo pipefail
+          find src -name '*.js' -type f | while read -r f; do
+            node -c "$f"
+          done
+
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - name: audit runtime deps
+        # --audit-level=high gates CI on HIGH + CRITICAL findings. MODERATE
+        # is logged but does not fail. Adjust to "moderate" if we want to
+        # block on the next discord.js undici chain bump for a known issue.
+        # --omit=dev skips devDependencies (we have none yet but reserve).
+        run: npm audit --audit-level=high --omit=dev

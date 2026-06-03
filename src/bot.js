@@ -4,12 +4,13 @@ const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
+const audit = require('./ui/audit'); // top-level require so any future hot-path can call audit.record safely; configure() runs in main below
 
 // --- Log Event Emitter (for SSE streaming) ---
 const logEmitter = new EventEmitter();
 logEmitter.setMaxListeners(50); // Allow many SSE clients
 
-// Set umask early — ensures correct permissions even via docker exec (which skips entrypoint)
+// Set umask early - ensures correct permissions even via docker exec (which skips entrypoint)
 process.umask(parseInt(process.env.UMASK || '002', 8));
 
 const version = require('../package.json').version;
@@ -47,6 +48,10 @@ function loadConfig(exitOnError = true) {
     parsed.discord.delayBetweenChannels = Math.max(0, Math.floor(parsed.discord.delayBetweenChannels ?? 500));
     parsed.discord.delayBetweenDeletes = Math.max(200, Math.floor(parsed.discord.delayBetweenDeletes ?? 400));
     parsed.discord.skipPinned = parsed.discord.skipPinned ?? true;
+    // Opt-in UI for the rule editor. Defaults off so first-time users get
+    // the simple cleanup view. Rules in config still apply at runtime
+    // regardless; this toggle only controls whether the editor surfaces.
+    parsed.discord.rulesUiEnabled = parsed.discord.rulesUiEnabled === true;
     parsed.logging = parsed.logging || {};
     parsed.logging.maxDays = Math.max(1, Math.floor(parsed.logging.maxDays ?? 30));
     parsed.webhooks = parsed.webhooks || {};
@@ -72,12 +77,55 @@ function loadConfig(exitOnError = true) {
     parsed.webhookDiscoveryOnSchedule = !!parsed.webhookDiscoveryOnSchedule;
     parsed.categories = parsed.categories || {};
 
+    // Prune stale sortInclude / sortPinned entries that reference categories
+    // no longer in config (e.g. user switched Discord server or removed a
+    // category via --sync). Keeps the Overview "Sort 37/29"-style mismatch
+    // from drifting forever. sortSkip is handled the same way.
+    const categoryNames = new Set(Object.keys(parsed.categories));
+    for (const obj of [parsed.sortInclude, parsed.sortPinned, parsed.sortSkip]) {
+      if (!obj || typeof obj !== 'object') continue;
+      for (const name of Object.keys(obj)) {
+        if (!categoryNames.has(name)) delete obj[name];
+      }
+    }
+
     // Warn about deprecated overrides: sections (#8)
     for (const [catName, cat] of Object.entries(parsed.categories)) {
       if (cat.overrides) {
-        log('WARN', `Category "${catName}" uses deprecated 'overrides:' section — run --sync to migrate to inline format`);
+        log('WARN', `Category "${catName}" uses deprecated 'overrides:' section - run --sync to migrate to inline format`);
       }
     }
+
+    // Normalize legacy rule shapes to the unified `rules` array. Existing
+    // configs written against the earlier dev iteration used separate
+    // deleteRules / keepRules arrays at the category level; convert them.
+    // Compiled regex is attached non-enumerably so the persisted YAML
+    // stays clean.
+    const normalizeLegacy = (target) => {
+      if (!target) return;
+      if (!Array.isArray(target.rules)) target.rules = [];
+      if (Array.isArray(target.deleteRules)) {
+        for (const r of target.deleteRules) target.rules.push({ ...r, action: 'delete' });
+        delete target.deleteRules;
+      }
+      if (Array.isArray(target.keepRules)) {
+        for (const r of target.keepRules) target.rules.push({ ...r, action: 'keep' });
+        delete target.keepRules;
+      }
+    };
+    normalizeLegacy(parsed);
+    parsed.rules = validateAndCompileRulesList(parsed.rules, 'rules', ['categories', 'excludeCategories']);
+
+    for (const [catName, cat] of Object.entries(parsed.categories)) {
+      normalizeLegacy(cat);
+      cat.rules = validateAndCompileRulesList(cat.rules, `categories.${catName}.rules`, ['channels', 'excludeChannels']);
+    }
+
+    // skipPinned stays as a top-level setting in Settings, not auto-migrated.
+    // Rules can still target pinned messages (via the `pinned` condition
+    // type) to override the default per channel or category. The scan loop
+    // applies the setting as a fall-back AFTER rule evaluation, so a
+    // delete-pinned rule for a specific scope wins over the global skip.
 
     // Clear+assign to keep exported reference stable
     Object.keys(config).forEach(k => delete config[k]);
@@ -93,7 +141,7 @@ function loadConfig(exitOnError = true) {
     }
     if (err.code === 'ENOENT') {
       console.error(`Config file not found: ${CONFIG_PATH}`);
-      console.error('Mount a config volume with config.yaml — see config.yaml.sample for reference');
+      console.error('Mount a config volume with config.yaml - see config.yaml.sample for reference');
     } else {
       console.error(`Failed to load config: ${err.message}`);
     }
@@ -169,15 +217,336 @@ function rotateLogs(maxDays) {
 
 // --- Channel List Helpers ---
 
-// _channels entries can be a plain string ("general") or a mapping ({"general": 3})
+// --- Rule Matching ---
+
+// Accept both discord.js Collections (Map-like, has .values()) and plain
+// arrays/objects. Used wherever we iterate msg.embeds / .attachments /
+// embed.fields, since the shape differs between live and JSON-restored
+// messages.
+function collectFrom(collOrArray) {
+  if (!collOrArray) return [];
+  if (typeof collOrArray.values === 'function') return [...collOrArray.values()];
+  if (Array.isArray(collOrArray)) return collOrArray;
+  return [];
+}
+
+// Pull every URL out of a Discord message: the text body, embed.url,
+// embed.image/thumbnail, and attachment URLs. Used by url-type rules.
+// The regex is constructed per call so concurrent scans never share
+// lastIndex state, which would corrupt the iteration if anything ever
+// becomes async-interleaved. (Same trap that bit vpn-gateway v1.4.1.)
+function extractUrls(msg) {
+  const urlRe = /https?:\/\/[^\s<>"')\]]+/gi;
+  const out = [];
+  const content = msg.content || '';
+  let m;
+  while ((m = urlRe.exec(content)) !== null) out.push(m[0]);
+  for (const e of collectFrom(msg.embeds)) {
+    if (e?.url) out.push(e.url);
+    if (e?.image?.url) out.push(e.image.url);
+    if (e?.thumbnail?.url) out.push(e.thumbnail.url);
+  }
+  for (const a of collectFrom(msg.attachments)) {
+    if (a?.url) out.push(a.url);
+  }
+  return out;
+}
+
+// Build a single haystack from msg.content + every text-bearing field of
+// each embed. word and regex rules match against this combined string so
+// bot/webhook-driven channels where the actual text lives in an embed
+// description or field still work the way users expect.
+// URLs are separate (extractUrls); attachment filenames are intentionally
+// left out for now - keep that surface scoped to its own rule type later.
+function extractMessageText(msg) {
+  const parts = [];
+  if (msg.content) parts.push(msg.content);
+  for (const e of collectFrom(msg.embeds)) {
+    if (!e) continue;
+    if (e.title) parts.push(e.title);
+    if (e.description) parts.push(e.description);
+    if (e.author?.name) parts.push(e.author.name);
+    if (e.footer?.text) parts.push(e.footer.text);
+    for (const f of collectFrom(e.fields)) {
+      if (f?.name) parts.push(f.name);
+      if (f?.value) parts.push(f.value);
+    }
+  }
+  return parts.join('\n');
+}
+
+// JS regex is synchronous and can't be preempted, so a pathological pattern
+// would block the bot for the duration. We cap input length (Discord caps
+// content at 4000 anyway), measure elapsed time, and warn loudly if a
+// pattern exceeds 100ms. Repeat offenders are visible in the log, and the
+// UI surfaces them so the user can simplify or drop the pattern.
+function safeRegexTest(regex, text) {
+  if (!regex) return false;
+  const sample = text.length > 8000 ? text.slice(0, 8000) : text;
+  const start = Date.now();
+  try {
+    const result = regex.test(sample);
+    const elapsed = Date.now() - start;
+    if (elapsed > 100) {
+      log('WARN', `Regex /${regex.source}/ took ${elapsed}ms on a ${sample.length}-char input. Consider simplifying the pattern; nested quantifiers like (.+)+ can run away on adversarial input.`);
+    }
+    return result;
+  } catch (err) {
+    log('WARN', `Regex test failed for /${regex.source}/: ${err.message}`);
+    return false;
+  }
+}
+
+// A single condition (one row in the rule modal). All conditions in a
+// rule must match for the rule to fire (implicit AND inside a rule).
+function matchCondition(msg, c) {
+  switch (c.type) {
+    case 'bot':
+      return msg.author?.bot === true;
+    case 'pinned':
+      return msg.pinned === true;
+    case 'user':
+      return msg.author?.id === c.value;
+    case 'word': {
+      const text = extractMessageText(msg);
+      // _compiled is a word-boundary regex when the value has word chars.
+      // For pure-symbol values (e.g. "&&"), no boundary regex is built and
+      // we fall back to substring match - those values have no useful
+      // word boundary anyway.
+      if (c._compiled) return safeRegexTest(c._compiled, text);
+      return c.caseInsensitive
+        ? text.toLowerCase().includes(c.value.toLowerCase())
+        : text.includes(c.value);
+    }
+    case 'regex':
+      return safeRegexTest(c._compiled, extractMessageText(msg));
+    case 'url': {
+      const urls = extractUrls(msg);
+      // Empty value on a url condition = "the message has any URL".
+      if (!c.value) return urls.length > 0;
+      for (const url of urls) {
+        if (safeRegexTest(c._compiled, url)) return true;
+      }
+      return false;
+    }
+    case 'attachment': {
+      const atts = collectFrom(msg.attachments);
+      if (atts.length === 0) return false;
+      if (!c.value) return true;
+      for (const a of atts) {
+        if (a?.name && safeRegexTest(c._compiled, a.name)) return true;
+      }
+      return false;
+    }
+    case 'image': {
+      // Image attachment (detected by content-type or extension) or an
+      // embed with an image/thumbnail URL counts.
+      const imageExt = /\.(png|jpe?g|gif|webp|bmp|tiff?|avif)$/i;
+      for (const a of collectFrom(msg.attachments)) {
+        if (typeof a?.contentType === 'string' && a.contentType.startsWith('image/')) return true;
+        if (typeof a?.name === 'string' && imageExt.test(a.name)) return true;
+      }
+      for (const e of collectFrom(msg.embeds)) {
+        if (e?.image?.url || e?.thumbnail?.url) return true;
+      }
+      return false;
+    }
+    case 'mention': {
+      const m = msg.mentions;
+      if (!m) return false;
+      if (!c.value) {
+        if (m.everyone) return true;
+        const userCount = m.users?.size ?? (Array.isArray(m.users) ? m.users.length : 0);
+        const roleCount = m.roles?.size ?? (Array.isArray(m.roles) ? m.roles.length : 0);
+        return userCount > 0 || roleCount > 0;
+      }
+      const v = c.value.toLowerCase();
+      if (v === 'everyone' || v === '@everyone' || v === 'here' || v === '@here') {
+        return m.everyone === true;
+      }
+      for (const u of collectFrom(m.users)) if (u?.id === c.value) return true;
+      for (const r of collectFrom(m.roles)) if (r?.id === c.value) return true;
+      return false;
+    }
+    case 'reply': {
+      return !!(msg.reference && (msg.reference.messageId || msg.reference.messageID));
+    }
+  }
+  return false;
+}
+
+// A rule's conditions are joined by per-condition operators. The first
+// condition starts the chain; subsequent conditions either extend the
+// current AND group (`join: 'and'`, default) or start a new OR group
+// (`join: 'or'`). The rule fires when ANY group's conditions all match.
+// This gives standard AND > OR precedence: `A AND B OR C` is `(A AND B) OR C`.
+// Multiple rules at the same level still combine as OR - adding two rules
+// is equivalent to one rule with the conditions joined by OR.
+// Returns null on no match, or { conditions } where conditions is the array
+// of condition objects from the FIRST winning AND-group. The caller can use
+// these for per-message attribution ("matched on word \"test\"") without
+// having to re-run matchCondition.
+function matchRule(msg, rule) {
+  if (!Array.isArray(rule.conditions) || rule.conditions.length === 0) return null;
+  const groups = [];
+  let current = [];
+  for (const c of rule.conditions) {
+    if (current.length === 0) {
+      current.push(c);
+    } else if (c.join === 'or') {
+      groups.push(current);
+      current = [c];
+    } else {
+      current.push(c);
+    }
+  }
+  if (current.length > 0) groups.push(current);
+  for (const group of groups) {
+    if (group.every(c => matchCondition(msg, c))) {
+      return { conditions: group };
+    }
+  }
+  return null;
+}
+
+// Three specificity tiers, most specific first. The first tier with any
+// matching rule decides the outcome for that message. Within a tier,
+// keep beats delete on conflict.
+const RULE_TIERS = ['channel-explicit', 'category-default', 'global'];
+
+// Evaluate a leveled rule list against a message. `leveledRules` is an
+// array of { level, rule } items. Returns:
+//   decision : 'keep' | 'delete' | 'none'
+//   tier     : which level decided (null when decision === 'none')
+//   conflict : true when keep and delete both matched within the winning tier
+function evaluateMessageRules(msg, leveledRules) {
+  for (const tier of RULE_TIERS) {
+    const keepMatches = [];
+    const deleteMatches = [];
+    for (const { level, rule } of leveledRules) {
+      if (level !== tier) continue;
+      const m = matchRule(msg, rule);
+      if (!m) continue;
+      const entry = { rule, conditions: m.conditions };
+      if (rule.action === 'keep') keepMatches.push(entry);
+      else if (rule.action === 'delete') deleteMatches.push(entry);
+    }
+    if (keepMatches.length === 0 && deleteMatches.length === 0) continue;
+    if (keepMatches.length > 0) {
+      return {
+        decision: 'keep',
+        tier,
+        keepMatches,
+        deleteMatches,
+        conflict: deleteMatches.length > 0,
+      };
+    }
+    return {
+      decision: 'delete',
+      tier,
+      keepMatches: [],
+      deleteMatches,
+      conflict: false,
+    };
+  }
+  return { decision: 'none', tier: null, keepMatches: [], deleteMatches: [], conflict: false };
+}
+
+// Short human-readable label for a single condition. Used in conflict
+// warnings, per-message attribution chips, and the dry-run dashboard.
+function describeCondition(c) {
+  if (!c) return '(unknown condition)';
+  switch (c.type) {
+    case 'bot':        return 'any bot';
+    case 'pinned':     return 'pinned';
+    case 'user':       return `user ${c.value}`;
+    case 'url':        return c.value ? `URL matching /${c.value}/` : 'any URL';
+    case 'word':       return `word "${c.value}"`;
+    case 'regex':      return `text matching /${c.value}/`;
+    case 'attachment': return c.value ? `attachment named /${c.value}/` : 'any attachment';
+    case 'image':      return 'an image';
+    case 'mention':    return c.value ? `mention of ${c.value}` : 'any mention';
+    case 'reply':      return 'a reply';
+    default:           return c.type;
+  }
+}
+
+// Human-readable summary of a rule, used in conflict warnings and the
+// dry-run dashboard. Prefers the user's free-text note when present.
+// Renders the same AND-then-OR grouping that matchRule evaluates, so the
+// printed expression reflects the actual evaluation.
+function describeRule(rule) {
+  if (!rule) return '(unknown rule)';
+  if (rule.note) return `"${rule.note}"`;
+  const describeC = describeCondition;
+  const groups = [];
+  let current = [];
+  for (const c of (rule.conditions || [])) {
+    if (current.length === 0) current.push(c);
+    else if (c.join === 'or') { groups.push(current); current = [c]; }
+    else current.push(c);
+  }
+  if (current.length > 0) groups.push(current);
+  const describeGroup = g => g.length === 1 ? describeC(g[0]) : `(${g.map(describeC).join(' AND ')})`;
+  return groups.length === 1 ? describeGroup(groups[0]) : groups.map(describeGroup).join(' OR ');
+}
+
+// _channels entries support two shapes, the second is the legacy retention
+// shortcut still parsed for backward compatibility:
+//   "general"           → no per-channel override
+//   {"general": 3}      → retention override (days). -1 = never delete.
+// Per-channel rules live ON the category-level rule via its `channels` /
+// `excludeChannels` filters in the new model; there's no per-channel rule
+// block on _channels entries anymore.
 function getChannelOverride(cat, channelName) {
   if (!cat._channels || !Array.isArray(cat._channels)) return undefined;
   for (const entry of cat._channels) {
     if (typeof entry === 'object' && entry !== null && entry[channelName] !== undefined) {
-      return entry[channelName];
+      const value = entry[channelName];
+      if (typeof value === 'number') return value;
     }
   }
   return undefined;
+}
+
+// Build the leveled rule list to evaluate for a single (category, channel)
+// pair. Each entry is { level, rule } where level is one of:
+//   'channel-explicit'  → category rule that names this channel in `channels`
+//   'category-default'  → category rule applying to this channel by default
+//                         (no `channels` filter or excluded-channels allowed
+//                         the channel through)
+//   'global'            → global rule applying to this category
+// The evaluator picks the most-specific tier with any match.
+function getEffectiveRules(globalRules, cat, categoryName, channelName) {
+  const out = [];
+
+  for (const rule of (globalRules || [])) {
+    if (!ruleScopeIncludesCategory(rule, categoryName)) continue;
+    out.push({ level: 'global', rule });
+  }
+
+  for (const rule of (cat.rules || [])) {
+    const hasAllowList = Array.isArray(rule.channels) && rule.channels.length > 0;
+    if (hasAllowList) {
+      if (!rule.channels.includes(channelName)) continue;
+      out.push({ level: 'channel-explicit', rule });
+    } else {
+      if (Array.isArray(rule.excludeChannels) && rule.excludeChannels.includes(channelName)) continue;
+      out.push({ level: 'category-default', rule });
+    }
+  }
+
+  return out;
+}
+
+function ruleScopeIncludesCategory(rule, categoryName) {
+  if (Array.isArray(rule.categories) && rule.categories.length > 0) {
+    if (!rule.categories.includes(categoryName)) return false;
+  }
+  if (Array.isArray(rule.excludeCategories) && rule.excludeCategories.includes(categoryName)) {
+    return false;
+  }
+  return true;
 }
 
 // --- Retention Resolution ---
@@ -188,13 +557,155 @@ function isEnabled(categoryName) {
   return cat.enabled === true;
 }
 
-// (#2, #19) Validate retention value — must be integer, >= -1
+// (#2, #19) Validate retention value - must be integer, >= -1
 function validateRetention(value, context) {
   if (typeof value !== 'number' || !Number.isInteger(value) || (value < -1)) {
     log('WARN', `Invalid retention value "${value}" for ${context}, using globalDefault (${config.globalDefault})`);
     return config.globalDefault;
   }
   return value;
+}
+
+// Allowed condition types. `bot`, `pinned`, `image`, and `reply` are value-
+// less and always require no value field. `url`, `attachment`, and
+// `mention` accept an optional value (empty = "any of this kind").
+// The remaining types need a non-empty `value` string.
+const CONDITION_TYPES = ['user', 'word', 'url', 'regex', 'bot', 'pinned', 'attachment', 'image', 'mention', 'reply'];
+const VALUELESS_CONDITION_TYPES = new Set(['bot', 'pinned', 'image', 'reply']);
+const VALUE_OPTIONAL_CONDITION_TYPES = new Set(['url', 'attachment', 'mention']);
+const REGEX_COMPILABLE_TYPES = new Set(['url', 'regex', 'attachment']);
+
+// Validate + compile a single condition. Returns the normalized condition
+// or null when the input is unusable.
+function validateAndCompileCondition(raw, context) {
+  if (typeof raw !== 'object' || raw === null) {
+    log('WARN', `Condition at ${context} is not an object, dropping`);
+    return null;
+  }
+  const type = raw.type;
+  if (!CONDITION_TYPES.includes(type)) {
+    log('WARN', `Condition at ${context} has unknown type "${type}", dropping`);
+    return null;
+  }
+  const requiresValue = !VALUELESS_CONDITION_TYPES.has(type) && !VALUE_OPTIONAL_CONDITION_TYPES.has(type);
+  const hasValue = typeof raw.value === 'string' && raw.value.length > 0;
+  if (requiresValue && !hasValue) {
+    log('WARN', `Condition at ${context} (type=${type}) has empty or missing value, dropping`);
+    return null;
+  }
+  let caseInsensitive = true;
+  if (raw.caseInsensitive !== undefined) {
+    if (typeof raw.caseInsensitive !== 'boolean') {
+      log('WARN', `Condition at ${context} has non-boolean caseInsensitive "${raw.caseInsensitive}", treating as true`);
+    } else {
+      caseInsensitive = raw.caseInsensitive;
+    }
+  }
+  const normalized = {
+    type,
+    value: VALUELESS_CONDITION_TYPES.has(type) ? '' : (hasValue ? raw.value : ''),
+    caseInsensitive,
+  };
+  // join controls how this condition combines with the previous one in the
+  // same rule: 'and' (default) extends the current AND group, 'or' starts
+  // a new group. The first condition's join is ignored at runtime.
+  if (raw.join === 'or') normalized.join = 'or';
+  if (REGEX_COMPILABLE_TYPES.has(type) && hasValue) {
+    try {
+      const compiled = new RegExp(raw.value, caseInsensitive ? 'i' : '');
+      Object.defineProperty(normalized, '_compiled', { value: compiled, enumerable: false });
+    } catch (err) {
+      log('WARN', `Condition at ${context} (type=${type}) has invalid regex "${raw.value}": ${err.message}`);
+      return null;
+    }
+  }
+  // Word matching uses a word-boundary regex so "test" matches the word
+  // "test" but NOT "testaments", "latest", or "Greatest". Users typing
+  // a word expect word semantics; substring matching is what the `regex`
+  // condition type is for.
+  //
+  // \b in JavaScript regex is ASCII-only: it treats only [A-Za-z0-9_] as
+  // word chars, even with the /u flag. That breaks two value shapes:
+  //   1. Non-ASCII letters at the edge (Norwegian "Tøffel", "café") - the
+  //      boundary check looks for an ASCII word/non-word transition and
+  //      misses transitions involving ø/é/å.
+  //   2. Values with non-word edges ("WORD!", ",foo") - the trailing \b
+  //      requires a word/non-word transition AT the edge, but if the value's
+  //      own edge is already non-word, there's no transition to find.
+  //
+  // For those shapes, fall back to substring match (no _compiled property,
+  // matchCondition sees the missing _compiled and uses .includes()). For
+  // ASCII-only values with ASCII-word edges, build the \b...\b regex.
+  if (type === 'word' && hasValue) {
+    const hasWordChar = /\w/.test(raw.value);
+    const asciiEdges = /^[A-Za-z0-9_]/.test(raw.value) && /[A-Za-z0-9_]$/.test(raw.value);
+    const allAscii = /^[\x00-\x7F]*$/.test(raw.value);
+    if (hasWordChar && asciiEdges && allAscii) {
+      try {
+        const escaped = raw.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const compiled = new RegExp(`\\b${escaped}\\b`, caseInsensitive ? 'i' : '');
+        Object.defineProperty(normalized, '_compiled', { value: compiled, enumerable: false });
+      } catch (err) {
+        log('WARN', `Word condition at ${context} could not compile to word-boundary regex: ${err.message}`);
+      }
+    }
+  }
+  return normalized;
+}
+
+// Validate + compile a list of unified rules. Each rule has:
+//   action     : 'keep' | 'delete'                            (required)
+//   conditions : array of conditions                          (required, AND)
+//   note       : free text label                              (optional)
+// Scope filters depend on where the rule lives:
+//   - Global rules use `categories` / `excludeCategories`
+//   - Category rules use `channels`   / `excludeChannels`
+// Filters are validated lazily - we keep arrays as-is and the runtime
+// scope check uses them. Returns a fresh array; invalid rules are dropped.
+function validateAndCompileRulesList(rules, context, scopeFilterKeys = []) {
+  if (rules === undefined || rules === null) return [];
+  if (!Array.isArray(rules)) {
+    log('WARN', `Rules at ${context} is not a list, ignoring`);
+    return [];
+  }
+  const valid = [];
+  for (let i = 0; i < rules.length; i++) {
+    const raw = rules[i];
+    if (typeof raw !== 'object' || raw === null) {
+      log('WARN', `Rule #${i + 1} at ${context} is not an object, dropping`);
+      continue;
+    }
+    const action = raw.action;
+    if (action !== 'keep' && action !== 'delete') {
+      log('WARN', `Rule #${i + 1} at ${context} has invalid action "${action}" (expected "keep" or "delete"), dropping`);
+      continue;
+    }
+    const conditions = [];
+    const rawConditions = Array.isArray(raw.conditions) ? raw.conditions
+      : (raw.type ? [raw] : []); // legacy single-condition shape: {type, value, ...}
+    if (rawConditions.length === 0) {
+      log('WARN', `Rule #${i + 1} at ${context} has no conditions, dropping`);
+      continue;
+    }
+    for (let j = 0; j < rawConditions.length; j++) {
+      const c = validateAndCompileCondition(rawConditions[j], `${context} rule#${i + 1} cond#${j + 1}`);
+      if (c) conditions.push(c);
+    }
+    if (conditions.length === 0) {
+      log('WARN', `Rule #${i + 1} at ${context} had only invalid conditions, dropping`);
+      continue;
+    }
+    const normalized = { action, conditions };
+    if (raw.note) normalized.note = String(raw.note);
+    for (const key of scopeFilterKeys) {
+      if (Array.isArray(raw[key])) {
+        normalized[key] = raw[key].slice().filter(v => typeof v === 'string' && v.length > 0);
+        if (normalized[key].length === 0) delete normalized[key];
+      }
+    }
+    valid.push(normalized);
+  }
+  return valid;
 }
 
 function getRetention(categoryName, channelName) {
@@ -222,12 +733,12 @@ function getRetentionSource(categoryName, channelName) {
 
 // --- Config File Header ---
 
-const CONFIG_HEADER = `# PurgeBot — Configuration
+const CONFIG_HEADER = `# PurgeBot - Configuration
 #
 # Retention hierarchy (first match wins):
-#   1. Inline override on channel  — per-channel retention
-#   2. default                     — category-wide default
-#   3. globalDefault               — fallback for categories without a default
+#   1. Inline override on channel  - per-channel retention
+#   2. default                     - category-wide default
+#   3. globalDefault               - fallback for categories without a default
 #
 # Retention values:
 #   -1   = Never delete (keep all messages forever)
@@ -240,12 +751,12 @@ const CONFIG_HEADER = `# PurgeBot — Configuration
 #
 # Categories must have "enabled: true" to be cleaned.
 # _channels is auto-populated by --sync. Add ": <days>" to override a channel.
-# Config is re-read before each cleanup run — no restart needed after editing.
+# Config is re-read before each cleanup run - no restart needed after editing.
 # Schedule changes via the Web UI take effect immediately.
 # Timezone is set via the TZ environment variable in Docker.
 #
-# deleteOld: true  — delete all messages older than retention (default)
-# deleteOld: false — only bulk-delete messages up to 14 days old (faster)
+# deleteOld: true  - delete all messages older than retention (default)
+# deleteOld: false - only bulk-delete messages up to 14 days old (faster)
 #
 # Example:
 #   my-category:
@@ -306,11 +817,82 @@ client.rest.on('rateLimited', (info) => {
   rateLimitTracker.hits++;
 });
 
+// --- Credential masking ---
+// The UI never receives plaintext credentials. On GET /api/config we replace
+// each saved credential with this sentinel; on PUT/PATCH/test-* the sentinel
+// resolves back to the stored value. A non-sentinel value (including the
+// empty string) is treated as a deliberate change by the user.
+//
+// This is defensive even before auth lands: the LAN bypass still exists, but
+// at least no passing observer of an /api/config response gets a working
+// webhook token from a casual inspection.
+
+const CRED_MASK = '__credential_unchanged__';
+
+function maskCredential(value) {
+  return (typeof value === 'string' && value.length > 0) ? CRED_MASK : '';
+}
+
+function resolveMaskedCredential(submitted, current) {
+  if (submitted === CRED_MASK) return typeof current === 'string' ? current : '';
+  return typeof submitted === 'string' ? submitted : '';
+}
+
+function maskedConfigSnapshot(cfg) {
+  // Deep-clone so we never mutate live config when shaping the response.
+  const snapshot = JSON.parse(JSON.stringify(cfg));
+  if (snapshot.webhooks && typeof snapshot.webhooks === 'object') {
+    if (typeof snapshot.webhooks.cleanup === 'string') {
+      snapshot.webhooks.cleanup = maskCredential(snapshot.webhooks.cleanup);
+    }
+    if (typeof snapshot.webhooks.info === 'string') {
+      snapshot.webhooks.info = maskCredential(snapshot.webhooks.info);
+    }
+  }
+  if (snapshot.gotify && typeof snapshot.gotify === 'object' && typeof snapshot.gotify.token === 'string') {
+    snapshot.gotify.token = maskCredential(snapshot.gotify.token);
+  }
+  return snapshot;
+}
+
+// --- Outbound URL validation ---
+// Validates the URL host before every outbound fetch. Defense against
+// config tampering: if someone edits the webhook URL to point at an
+// arbitrary host, the cleanup summary would otherwise be leaked there.
+
+const DISCORD_WEBHOOK_HOSTS = new Set(['discord.com', 'discordapp.com']);
+
+function isAllowedDiscordWebhookUrl(url) {
+  if (typeof url !== 'string' || !url) return false;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:') return false;
+    if (!DISCORD_WEBHOOK_HOSTS.has(u.hostname)) return false;
+    return u.pathname.startsWith('/api/webhooks/');
+  } catch (_) {
+    return false;
+  }
+}
+
+function isAllowedGotifyUrl(url) {
+  if (typeof url !== 'string' || !url) return false;
+  try {
+    const u = new URL(url);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
 // --- Webhook Notification ---
 
 async function sendWebhook(embeds) {
   const webhookUrl = config.webhooks.cleanup;
   if (!webhookUrl) return;
+  if (!isAllowedDiscordWebhookUrl(webhookUrl)) {
+    log('WARN', 'Cleanup webhook URL is not a valid Discord webhook - refusing to send');
+    return;
+  }
 
   // Discord allows max 10 embeds per message
   for (let i = 0; i < embeds.length; i += 10) {
@@ -324,7 +906,7 @@ async function sendWebhook(embeds) {
       // (#20) Log webhook error response body for debugging
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        log('WARN', `Webhook response: ${res.status} — ${body}`);
+        log('WARN', `Webhook response: ${res.status} - ${body}`);
       }
       if (i + 10 < embeds.length) await sleep(1000);
     } catch (err) {
@@ -340,7 +922,36 @@ async function sendSummaryNotification(runStats) {
   const catCount = Object.keys(runStats.categories || {}).length;
   const trigger = (runStats.trigger || 'schedule').charAt(0).toUpperCase() + (runStats.trigger || 'schedule').slice(1);
   const titleSuffix = runStats.cancelled ? 'Stopped' : 'Complete';
-  let description = `Deleted **${runStats.totalPurged}** messages from **${runStats.totalProcessed}** channels (${catCount} categories) in **${formatDuration(runStats.duration)}**`;
+  // Sum across categories so the embed reports rule vs retention without the
+  // reader having to read every category embed.
+  let totalByRule = 0;
+  let totalByRetention = 0;
+  for (const c of Object.values(runStats.categories || {})) {
+    for (const ch of (c.channels || [])) {
+      totalByRule += ch.rollup?.byRule ?? ch.deletedByRule ?? 0;
+      totalByRetention += ch.rollup?.byRetention ?? Math.max(0, (ch.purged || 0) - (ch.deletedByRule || 0));
+    }
+  }
+  let description;
+  if (runStats.ruleOnly && runStats.ruleDescription) {
+    // Rule-only summary highlights what fired; the reader doesn't have to
+    // cross-reference the rule list.
+    const where = runStats.ruleOnly.scope === 'category'
+      ? `category **${runStats.ruleOnly.categoryName}**`
+      : '**global rule**';
+    description = `Ran ${where} only - ${runStats.ruleDescription}\nDeleted **${runStats.totalPurged}** messages from **${runStats.totalProcessed}** channels in **${formatDuration(runStats.duration)}**`;
+  } else {
+    description = `Deleted **${runStats.totalPurged}** messages from **${runStats.totalProcessed}** channels (${catCount} categories) in **${formatDuration(runStats.duration)}**`;
+    if (totalByRule > 0 || totalByRetention > 0) {
+      const parts = [];
+      if (totalByRule > 0) parts.push(`${totalByRule} by rule`);
+      if (totalByRetention > 0) parts.push(`${totalByRetention} by retention`);
+      description += `\n${parts.join(' · ')}`;
+    }
+  }
+  if (runStats.totalScanned) {
+    description += `\nScanned ${runStats.totalScanned.toLocaleString()} message${runStats.totalScanned !== 1 ? 's' : ''}`;
+  }
   if (runStats.totalErrors > 0) {
     description += `\n⚠ ${runStats.totalErrors} error${runStats.totalErrors !== 1 ? 's' : ''}`;
   }
@@ -364,7 +975,9 @@ async function sendSummaryNotification(runStats) {
 
   // Discord notification
   const webhookUrl = config.webhooks.info;
-  if (webhookUrl) {
+  if (webhookUrl && !isAllowedDiscordWebhookUrl(webhookUrl)) {
+    log('WARN', 'Summary info webhook URL is not a valid Discord webhook - refusing to send');
+  } else if (webhookUrl) {
     const infoColor = parseInt((config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12;
     const embed = {
       title: `Cleanup ${titleSuffix} · ${trigger} Run`,
@@ -382,22 +995,29 @@ async function sendSummaryNotification(runStats) {
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        log('WARN', `Summary webhook response: ${res.status} — ${body}`);
+        log('WARN', `Summary webhook response: ${res.status} - ${body}`);
       }
     } catch (err) {
       log('ERROR', `Summary webhook failed: ${err.message}`);
     }
   }
 
-  // Gotify notification — combined summary with per-category breakdown
+  // Gotify notification - combined summary with per-category breakdown
   let gotifyMsg = description;
   const cats = runStats.categories || {};
-  const activeCats = Object.entries(cats).filter(([, s]) => s.purged > 0 || s.errors > 0);
+  // Surface a category if anything happened: purged, errors, kept by rule,
+  // or rule conflicts. Keeps the breakdown informative when rules fire on
+  // an otherwise quiet category.
+  const activeCats = Object.entries(cats).filter(([, s]) =>
+    s.purged > 0 || s.errors > 0 || s.keptByRule > 0 || s.ruleConflicts > 0);
   if (activeCats.length > 0) {
     gotifyMsg += '\n';
     for (const [catName, stats] of activeCats) {
       let line = `- **${catName}:** ${stats.purged} purged in ${formatDuration(stats.durationMs)}`;
+      if (stats.deletedByRule > 0) line += ` (${stats.deletedByRule} by rule)`;
+      if (stats.keptByRule > 0) line += `, ${stats.keptByRule} protected by rule`;
       if (stats.errors > 0) line += `, ${stats.errors} error${stats.errors !== 1 ? 's' : ''}`;
+      if (stats.ruleConflicts > 0) line += `, ${stats.ruleConflicts} rule conflict${stats.ruleConflicts !== 1 ? 's' : ''}`;
       gotifyMsg += '\n' + line;
     }
   }
@@ -433,27 +1053,58 @@ function humanizeError(msg) {
 }
 
 // (#14) Truncate embed description to stay within Discord's 4096 char limit
-function buildCategoryEmbed(catName, channelResults, hasErrors, isDryRun) {
-  const prefix = isDryRun ? 'Dry Run — ' : '';
+function buildCategoryEmbed(catName, channelResults, hasErrors, isDryRun, opts = {}) {
+  const { ruleOnly = false, ruleDescription = null, ruleAction = null } = opts;
+  const prefix = isDryRun ? 'Dry Run - ' : '';
+  const kind = ruleOnly ? 'Rule Run' : 'Message Cleanup';
   const lines = [];
 
+  // Rule-only header: first line spells out exactly what fired so the
+  // reader doesn't have to guess from the per-channel sums.
+  if (ruleOnly && ruleDescription) {
+    const verb = ruleAction === 'keep' ? '🛡 Keep' : '🗑 Delete';
+    lines.push(`**${verb} rule:** ${ruleDescription}`);
+    lines.push('');
+  }
+
   for (const ch of channelResults) {
-    // Only show channels with activity, warnings, or errors
     if (ch.error) {
-      lines.push(`#${ch.name} — ❌ ${ch.error}`);
+      lines.push(`#${ch.name} - ❌ ${ch.error}`);
     } else if (ch.purged > 0) {
       const source = ch.retentionSource === 'override' ? ' (override)' : '';
-      lines.push(`#${ch.name} — ${ch.retention}d${source} — **${ch.purged} purged**`);
+      const retentionLabel = ruleOnly
+        ? 'rule-only'
+        : (ch.retention === -1 ? 'never' : `${ch.retention}d`);
+      // Inline rule-vs-retention split. Surfaces directly in Discord so the
+      // reader doesn't have to open the Web UI to interpret the number.
+      const byRule = ch.rollup?.byRule ?? ch.deletedByRule ?? 0;
+      const byRetention = ch.rollup?.byRetention ?? Math.max(0, (ch.purged || 0) - byRule);
+      const splitParts = [];
+      if (byRule > 0) splitParts.push(`${byRule} by rule`);
+      if (byRetention > 0) splitParts.push(`${byRetention} by retention`);
+      const split = splitParts.length ? ` (${splitParts.join(', ')})` : '';
+      // Scan context so an empty channel + huge scan doesn't look the same
+      // as a small channel that's fully covered.
+      const scannedNote = ch.scannedCount
+        ? ` · scanned ${ch.scannedCount.toLocaleString()}${ch.scanComplete ? ' (whole channel)' : ''}`
+        : '';
+      lines.push(`#${ch.name} - ${retentionLabel}${source} - **${ch.purged} purged**${split}${scannedNote}`);
+    } else if (ch.scannedCount > 0 && (ruleOnly || ch.deletedByRule === 0)) {
+      // Zero-purge channels in a rule-only run still deserve a line so the
+      // reader can see "we looked, nothing matched" instead of silence.
+      lines.push(`#${ch.name} - scanned ${ch.scannedCount.toLocaleString()}${ch.scanComplete ? ' (whole channel)' : ''} - nothing matched`);
     }
-    // Surface plain-language warnings (e.g. an >14-day backlog) right
-    // under the channel so the reader sees why it keeps coming back.
+    if (ch.keptByRule > 0) {
+      lines.push(`#${ch.name} - 🛡 ${ch.keptByRule} protected by rule`);
+    }
     for (const w of (ch.warnings || [])) {
-      lines.push(`#${ch.name} — ⚠ ${w}`);
+      lines.push(`#${ch.name} - ⚠ ${w}`);
     }
   }
 
   const catDurationMs = channelResults.reduce((sum, ch) => sum + (ch.durationMs || 0), 0);
   const totalPurged = channelResults.reduce((sum, ch) => sum + (ch.purged || 0), 0);
+  const totalScanned = channelResults.reduce((sum, ch) => sum + (ch.scannedCount || 0), 0);
   const successColor = parseInt((config.webhooks?.cleanupColor || '#238636').replace('#', ''), 16) || 0x238636;
   let color = isDryRun ? 0x3498db : successColor;
   if (hasErrors) color = 0xe74c3c;
@@ -465,10 +1116,10 @@ function buildCategoryEmbed(catName, channelResults, hasErrors, isDryRun) {
   }
 
   return {
-    title: `${prefix}Message Cleanup — ${catName}`,
+    title: `${prefix}${kind} - ${catName}`,
     description,
     color,
-    footer: { text: `${channelResults.length} channels • ${totalPurged} messages ${isDryRun ? 'would be purged' : 'purged'} • ${formatDuration(catDurationMs)} · PurgeBot v${version} by ProphetSe7en` },
+    footer: { text: `${channelResults.length} channels • ${totalScanned.toLocaleString()} scanned • ${totalPurged} ${isDryRun ? 'would be purged' : 'purged'} • ${formatDuration(catDurationMs)} · PurgeBot v${version} by ProphetSe7en` },
     timestamp: new Date().toISOString(),
   };
 }
@@ -489,7 +1140,7 @@ async function autoDiscoverChannels(guild) {
     discoveredMap.get(category.name).push(channel.name);
   }
 
-  // Don't notify on first auto-discovery run — only on subsequent changes
+  // Don't notify on first auto-discovery run - only on subsequent changes
   const isFirstDiscovery = !config._discoveryComplete;
   let changes = 0;
   const discoveries = [];
@@ -501,7 +1152,7 @@ async function autoDiscoverChannels(guild) {
     if (!config.categories[catName]) {
       config.categories[catName] = { enabled: false, default: config.globalDefault, _channels: sortedChannels };
       changes++;
-      log('INFO', `Auto-discovered category "${catName}" (DISABLED) — ${channels.length} channels`);
+      log('INFO', `Auto-discovered category "${catName}" (DISABLED) - ${channels.length} channels`);
       discoveries.push({ type: 'category', name: catName, channels: sortedChannels });
       continue;
     }
@@ -521,7 +1172,7 @@ async function autoDiscoverChannels(guild) {
         changes++;
         const effectiveRetention = cat.default ?? config.globalDefault;
         const source = cat.default !== undefined ? 'category' : 'global';
-        log('INFO', `Auto-discovered #${chanName} in "${catName}" (${formatRetention(effectiveRetention)} — ${source} default)`);
+        log('INFO', `Auto-discovered #${chanName} in "${catName}" (${formatRetention(effectiveRetention)} - ${source} default)`);
         discoveries.push({ type: 'channel', name: chanName, category: catName, retention: effectiveRetention, source, enabled: cat.enabled });
       }
     }
@@ -586,7 +1237,7 @@ async function sendDiscoveryNotification(discoveries) {
   const removedChannels = discoveries.filter(d => d.type === 'channel-removed');
 
   for (const cat of newCategories) {
-    lines.push(`**New category: ${cat.name}** — \`DISABLED\``);
+    lines.push(`**New category: ${cat.name}** - \`DISABLED\``);
     lines.push(`Channels: ${cat.channels.join(', ')} (${cat.channels.length})`);
     lines.push(`Set \`enabled: true\` in config to activate cleanup\n`);
   }
@@ -601,14 +1252,14 @@ async function sendDiscoveryNotification(discoveries) {
   for (const [catName, channels] of byCategory) {
     for (const ch of channels) {
       const status = ch.enabled ? '' : ' · category disabled';
-      lines.push(`**${catName}** — #${ch.name} added`);
+      lines.push(`**${catName}** - #${ch.name} added`);
       lines.push(`Cleanup: ${formatRetention(ch.retention)} (${ch.source} default)${status}`);
     }
   }
 
   // Removed categories
   for (const cat of removedCategories) {
-    lines.push(`**Removed category: ${cat.name}** — ${cat.channelCount} channel${cat.channelCount !== 1 ? 's' : ''} removed from config`);
+    lines.push(`**Removed category: ${cat.name}** - ${cat.channelCount} channel${cat.channelCount !== 1 ? 's' : ''} removed from config`);
   }
 
   // Group removed channels by category
@@ -620,7 +1271,7 @@ async function sendDiscoveryNotification(discoveries) {
 
   for (const [catName, channels] of removedByCategory) {
     const names = channels.map(ch => `#${ch.name}`).join(', ');
-    lines.push(`**${catName}** — ${names} removed (deleted from Discord)`);
+    lines.push(`**${catName}** - ${names} removed (deleted from Discord)`);
   }
 
   let description = lines.join('\n');
@@ -630,7 +1281,9 @@ async function sendDiscoveryNotification(discoveries) {
 
   // Discord notification
   const webhookUrl = config.webhooks.info;
-  if (webhookUrl) {
+  if (webhookUrl && !isAllowedDiscordWebhookUrl(webhookUrl)) {
+    log('WARN', 'Auto-discovery info webhook URL is not a valid Discord webhook - refusing to send');
+  } else if (webhookUrl) {
     const infoColor = parseInt((config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12;
     const embed = {
       title: 'Channel Auto-Discovery',
@@ -648,7 +1301,7 @@ async function sendDiscoveryNotification(discoveries) {
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        log('WARN', `Info webhook response: ${res.status} — ${body}`);
+        log('WARN', `Info webhook response: ${res.status} - ${body}`);
       }
     } catch (err) {
       log('ERROR', `Info webhook failed: ${err.message}`);
@@ -666,7 +1319,7 @@ async function sendSortNotification(results) {
 
   // Category moves
   if (results.categories.length > 0) {
-    lines.push(`**Categories sorted** — ${results.categories.length} repositioned`);
+    lines.push(`**Categories sorted** - ${results.categories.length} repositioned`);
     for (const cat of results.categories) {
       lines.push(`· ${cat.name}: position ${cat.from} → ${cat.to}`);
     }
@@ -674,7 +1327,7 @@ async function sendSortNotification(results) {
 
   // Channel moves per category
   for (const catGroup of results.channels) {
-    lines.push(`\n**${catGroup.category}** — ${catGroup.moves.length} channel${catGroup.moves.length !== 1 ? 's' : ''} sorted`);
+    lines.push(`\n**${catGroup.category}** - ${catGroup.moves.length} channel${catGroup.moves.length !== 1 ? 's' : ''} sorted`);
   }
 
   if (lines.length === 0) return;
@@ -684,9 +1337,11 @@ async function sendSortNotification(results) {
     description = description.substring(0, 3990) + '\n... (truncated)';
   }
 
-  // Discord notification — use info webhook
+  // Discord notification - use info webhook
   const webhookUrl = config.webhooks.info;
-  if (webhookUrl) {
+  if (webhookUrl && !isAllowedDiscordWebhookUrl(webhookUrl)) {
+    log('WARN', 'Sort info webhook URL is not a valid Discord webhook - refusing to send');
+  } else if (webhookUrl) {
     const infoColor = parseInt((config.webhooks?.infoColor || '#f39c12').replace('#', ''), 16) || 0xf39c12;
     const embed = {
       title: 'Server Sort',
@@ -703,7 +1358,7 @@ async function sendSortNotification(results) {
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        log('WARN', `Sort notification webhook response: ${res.status} — ${body}`);
+        log('WARN', `Sort notification webhook response: ${res.status} - ${body}`);
       }
     } catch (err) {
       log('ERROR', `Sort notification webhook failed: ${err.message}`);
@@ -718,6 +1373,10 @@ async function sendSortNotification(results) {
 
 async function sendGotify(title, message, level = 'info') {
   if (!config.gotify?.enabled || !config.gotify.url || !config.gotify.token) return;
+  if (!isAllowedGotifyUrl(config.gotify.url)) {
+    log('WARN', 'Gotify URL is not a valid http(s) URL - refusing to send');
+    return;
+  }
 
   let priority;
   if (level === 'warning') {
@@ -748,7 +1407,7 @@ async function sendGotify(title, message, level = 'info') {
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      log('WARN', `Gotify notification failed: ${res.status} — ${body}`);
+      log('WARN', `Gotify notification failed: ${res.status} - ${body}`);
     }
   } catch (err) {
     log('ERROR', `Gotify notification failed: ${err.message}`);
@@ -824,7 +1483,7 @@ function persistStats(lastRun, { partial = false } = {}) {
         }
       }
 
-      // Prune stale entries — keep top 200 channels and top 100 categories
+      // Prune stale entries - keep top 200 channels and top 100 categories
       const chEntries = Object.entries(data.channelTotals);
       if (chEntries.length > 200) {
         chEntries.sort((a, b) => b[1] - a[1]);
@@ -855,7 +1514,28 @@ let cleanupStartTime = null;
 let sortRunning = false;
 
 async function runCleanup(options = {}) {
-  const { forceDryRun = false, forceLive = false, categoryFilter = null, channelFilter = null, trigger = 'schedule' } = options;
+  const { forceDryRun = false, forceLive = false, categoryFilter = null, channelFilter = null, trigger = 'schedule', ruleOnly = null } = options;
+  // ruleOnly = { scope: 'global'|'category', categoryName?: string, ruleIdx: number }
+  // When set: only that single rule fires for the run, retention is treated
+  // as -1 (no age-based deletes), and ruleOnly.scope === 'category' forces
+  // the category filter to ruleOnly.categoryName.
+  let effectiveCategoryFilter = categoryFilter;
+  if (ruleOnly && ruleOnly.scope === 'category' && ruleOnly.categoryName) {
+    effectiveCategoryFilter = ruleOnly.categoryName;
+  }
+  // Pre-resolve the targeted rule for notification context. Falls back to
+  // a generic phrasing if the rule disappeared between trigger and run.
+  let ruleOnlyDescription = null;
+  let ruleOnlyAction = null;
+  if (ruleOnly) {
+    const ro = ruleOnly.scope === 'global'
+      ? config.rules?.[ruleOnly.ruleIdx]
+      : config.categories?.[ruleOnly.categoryName]?.rules?.[ruleOnly.ruleIdx];
+    if (ro) {
+      ruleOnlyDescription = describeRule(ro);
+      ruleOnlyAction = ro.action || 'delete';
+    }
+  }
 
   if (cleanupRunning) {
     log('WARN', 'Cleanup already running, skipping');
@@ -871,10 +1551,10 @@ async function runCleanup(options = {}) {
   let effectiveDryRun = forceDryRun;
 
   try {
-    // (#10) Hot-reload config — don't crash on parse errors
+    // (#10) Hot-reload config - don't crash on parse errors
     loadConfig(false);
     effectiveDryRun = forceLive ? false : (config.dryRun || forceDryRun);
-    let filterLabel = categoryFilter ? ` [category: ${categoryFilter}]` : '';
+    let filterLabel = effectiveCategoryFilter ? ` [category: ${effectiveCategoryFilter}]` : '';
     if (channelFilter) filterLabel += ` [channel: #${channelFilter}]`;
     log('INFO', `Starting cleanup run (dryRun=${effectiveDryRun})${filterLabel}`);
     const guild = client.guilds.cache.get(GUILD_ID);
@@ -894,6 +1574,7 @@ async function runCleanup(options = {}) {
     let totalPurged = 0;
     let totalSkipped = 0;
     let totalErrors = 0;
+    let totalScanned = 0;
 
     // Build category map from Discord: catName → [channel objects]
     const discordCategories = guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory);
@@ -913,7 +1594,7 @@ async function runCleanup(options = {}) {
       logEmitter.emit('cleanup-progress', data);
     }
 
-    // Process each enabled category — only channels in _channels (allow-list)
+    // Process each enabled category - only channels in _channels (allow-list)
     for (const [catName, channels] of categoryChannelMap) {
       if (cleanupCancelled) {
         log('INFO', 'Cleanup cancelled by user');
@@ -925,7 +1606,7 @@ async function runCleanup(options = {}) {
       }
 
       // Category filter (for Test tab single-category dry-run)
-      if (categoryFilter && catName !== categoryFilter) {
+      if (effectiveCategoryFilter && catName !== effectiveCategoryFilter) {
         continue;
       }
 
@@ -960,11 +1641,28 @@ async function runCleanup(options = {}) {
         log('INFO', `  Scanning ${catName}/#${chanName} (${channelIndex}/${allowedCount})`);
         emitProgress({ category: catName, currentChannel: chanName, channelIndex, channelCount: allowedCount, dryRun: effectiveDryRun });
 
-        const retention = getRetention(catName, chanName);
-        const retentionSource = getRetentionSource(catName, chanName);
+        // In ruleOnly mode the user is testing one specific rule. Treat
+        // retention as "never" so the result is purely the rule's effect,
+        // and filter the leveled-rules list down to just that one rule.
+        const retention = ruleOnly ? -1 : getRetention(catName, chanName);
+        const retentionSource = ruleOnly ? 'rule-only' : getRetentionSource(catName, chanName);
+        let leveledRules = getEffectiveRules(config.rules, cat, catName, chanName);
+        if (ruleOnly) {
+          const targetRule = ruleOnly.scope === 'global'
+            ? config.rules?.[ruleOnly.ruleIdx]
+            : cat.rules?.[ruleOnly.ruleIdx];
+          leveledRules = targetRule
+            ? leveledRules.filter(lr => lr.rule === targetRule)
+            : [];
+        }
+        const hasAnyRules = leveledRules.length > 0;
+        const deleteRuleCount = leveledRules.filter(lr => lr.rule.action === 'delete').length;
+        const keepRuleCount = leveledRules.filter(lr => lr.rule.action === 'keep').length;
 
-        // Skip if never-delete
-        if (retention === -1) {
+        // Skip the channel only when retention is -1 AND no rules apply.
+        // With rules in play we still scan, since a rule may match individual
+        // messages even when age-based deletion is off.
+        if (retention === -1 && !hasAnyRules) {
           const result = { name: chanName, skipped: true };
           channelResults.push(result);
           emitProgress({ category: catName, channel: result, totalProcessed, totalPurged, totalErrors, dryRun: effectiveDryRun });
@@ -980,11 +1678,19 @@ async function runCleanup(options = {}) {
         const bulkDeleteLimit = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
         try {
-          // (#1) Split into bulk-deletable (<14d) and old (>14d) messages
+          // bulkDeletable: messages ≤14d we'll batch via Discord's bulk API
+          // (fast, no per-message rate limit). oldByRetention vs oldByRule:
+          // two separate >14d buckets so the maxOldDeletesPerChannel budget
+          // can prioritise retention-old over rule-old when both compete.
           let bulkDeletable = [];
-          let oldDeletable = [];
+          let oldByRetention = [];
+          let oldByRule = [];
+          let keptByRule = 0;
+          let deletedByRule = 0;
+          const ruleConflicts = [];
           let lastId = undefined;
           let fetched = 0;
+          let oldestScannedMsg = null;
           const maxMessages = config.discord.maxMessagesPerChannel;
 
           while (fetched < maxMessages) {
@@ -996,76 +1702,151 @@ async function runCleanup(options = {}) {
             if (messages.size === 0) break;
 
             for (const [, msg] of messages) {
-              // (N7) Skip pinned messages unless explicitly disabled
+              // Rules first: most-specific tier with any match decides;
+              // keep wins over delete inside that tier.
+              if (hasAnyRules) {
+                const r = evaluateMessageRules(msg, leveledRules);
+                if (r.decision === 'keep') {
+                  keptByRule++;
+                  if (r.conflict) {
+                    ruleConflicts.push({
+                      messageId: msg.id,
+                      author: msg.author?.tag || msg.author?.username || msg.author?.id || 'unknown',
+                      tier: r.tier,
+                      keepRule: r.keepMatches[0].rule,
+                      deleteRule: r.deleteMatches[0].rule,
+                    });
+                    const keepMore = r.keepMatches.length > 1 ? ` (+${r.keepMatches.length - 1} more)` : '';
+                    const delMore = r.deleteMatches.length > 1 ? ` (+${r.deleteMatches.length - 1} more)` : '';
+                    log('WARN', `  ${catName}/#${chanName}: rule conflict on message ${msg.id} at ${r.tier} level (kept by ${describeRule(r.keepMatches[0].rule)}${keepMore}; would have been deleted by ${describeRule(r.deleteMatches[0].rule)}${delMore})`);
+                  }
+                  continue;
+                }
+                if (r.decision === 'delete') {
+                  // First matching delete-rule decides attribution. Carry the
+                  // rule + winning condition group so the UI can show "matched
+                  // word \"test\"" per message.
+                  const winning = r.deleteMatches[0];
+                  const reason = {
+                    kind: 'rule', rule: winning.rule, conditions: winning.conditions, tier: r.tier,
+                  };
+                  if (msg.createdAt > bulkDeleteLimit) {
+                    bulkDeletable.push({ msg, reason });
+                    deletedByRule++;
+                  } else {
+                    // Rule wanted delete on a >14d message. deleteOld gates
+                    // the RETENTION path (skipping slow individual deletes
+                    // when the user wants fast bulk-only runs) - but a rule
+                    // match is an explicit user intent, so honour it even
+                    // when deleteOld is false. The maxOldDeletesPerChannel
+                    // budget still caps per-run throughput.
+                    oldByRule.push({ msg, reason });
+                    deletedByRule++;
+                  }
+                  continue;
+                }
+              }
+
+              // Rules didn't decide (or there were none). Apply the global
+              // skipPinned default before age-based retention so an existing
+              // user who relied on the Settings checkbox still sees pinned
+              // messages preserved when no rule overrides that decision.
               if (msg.pinned && config.discord.skipPinned) continue;
+
+              // Fall through to age-based retention. retention=-1 here means
+              // "rules didn't match and the configured retention is never" -
+              // leave the message alone.
+              if (retention === -1) continue;
               if (msg.createdAt < cutoff) {
+                const reason = { kind: 'retention', retention };
                 if (msg.createdAt > bulkDeleteLimit) {
-                  bulkDeletable.push(msg);
+                  bulkDeletable.push({ msg, reason });
                 } else if (deleteOld) {
-                  oldDeletable.push(msg);
+                  oldByRetention.push({ msg, reason });
                 }
               }
             }
 
+            // Discord returns batches newest-first, so the last entry in each
+            // batch is the oldest of that batch - and the oldest scanned so
+            // far overall after the loop exits.
+            oldestScannedMsg = messages.last();
             lastId = messages.last().id;
             fetched += messages.size;
+            // If this batch was smaller than the asked-for limit, we've hit
+            // the end of the channel - no point asking again.
+            if (messages.size < batchSize) break;
           }
+          const scanComplete = fetched < maxMessages;
 
-          const totalDeletable = bulkDeletable.length + oldDeletable.length;
+          // Shared old-message budget: retention prioritised, rule-old fills
+          // the rest of the cap. Anything beyond cap waits for the next run.
+          const maxOld = config.discord.maxOldDeletesPerChannel;
+          const oldRetentionToDelete = oldByRetention.slice(0, maxOld);
+          const oldRuleBudget = Math.max(0, maxOld - oldRetentionToDelete.length);
+          const oldRuleToDelete = oldByRule.slice(0, oldRuleBudget);
+          const oldToDeleteCombined = [...oldRetentionToDelete, ...oldRuleToDelete];
+          const totalOldQueued = oldByRetention.length + oldByRule.length;
+
+          const totalDeletable = bulkDeletable.length + totalOldQueued;
           let deleted = 0;
           let failedDeletes = 0;
+          const retentionLabel = retention === -1 ? 'never' : `${retention}d`;
 
           if (totalDeletable === 0) {
-            log('INFO', `  ${catName}/#${chanName}: 0 messages to delete (${fetched} scanned, retention=${retention}d)`);
+            // Surface keep-rule activity even when nothing was deleted - a
+            // run that only protected messages is still meaningful signal.
+            const protectedNote = keptByRule > 0 ? `, ${keptByRule} protected by rule` : '';
+            const tail = hasAnyRules
+              ? `${fetched} scanned, retention=${retentionLabel}, ${deleteRuleCount} delete-rule(s), ${keepRuleCount} keep-rule(s)${protectedNote}`
+              : `${fetched} scanned, retention=${retentionLabel}`;
+            log('INFO', `  ${catName}/#${chanName}: 0 messages to delete (${tail})`);
           } else if (effectiveDryRun) {
-            // (#5) Log correct count in dry-run mode — apply same maxOld cap as live mode
-            const maxOld = config.discord.maxOldDeletesPerChannel;
-            const cappedOld = oldDeletable.slice(0, maxOld).length;
+            const cappedOld = oldToDeleteCombined.length;
             const wouldDelete = bulkDeletable.length + cappedOld;
             let detail = `${bulkDeletable.length} bulk`;
+            if (deletedByRule > 0) detail += ` (incl. ${deletedByRule} by rule)`;
             if (cappedOld > 0) detail += ` + ${cappedOld} old (>14d)`;
-            if (oldDeletable.length > maxOld) detail += `, ${oldDeletable.length - maxOld} old remaining`;
-            const bulkOnly = !deleteOld ? ' (bulk only)' : '';
-            log('INFO', `[DRY RUN] ${catName}/#${chanName}: would delete ${wouldDelete} messages (${detail}, retention=${retention}d)${bulkOnly}`);
+            if (totalOldQueued > maxOld) detail += `, ${totalOldQueued - maxOld} old waiting`;
+            if (keptByRule > 0) detail += `, ${keptByRule} protected by rule`;
+            const bulkOnly = !deleteOld && totalOldQueued === 0 ? ' (bulk only)' : '';
+            log('INFO', `[DRY RUN] ${catName}/#${chanName}: would delete ${wouldDelete} messages (${detail}, retention=${retentionLabel})${bulkOnly}`);
             totalPurged += wouldDelete;
           } else {
-
-            // Bulk delete messages within 14-day window
-            // (#3) filterOld=true prevents error if messages aged past 14d between fetch and delete
-            // (N2) Use return value for accurate count
+            // Bulk delete (≤14d). (#3) filterOld=true prevents error if a
+            // message aged past 14d between fetch and delete.
             for (let i = 0; i < bulkDeletable.length; i += 100) {
               if (cleanupCancelled) break;
               const batch = bulkDeletable.slice(i, i + 100);
-              if (batch.length === 1) {
+              const msgBatch = batch.map(e => e.msg);
+              if (msgBatch.length === 1) {
                 try {
-                  await batch[0].delete();
+                  await msgBatch[0].delete();
                   deleted++;
                 } catch (delErr) {
                   failedDeletes++;
-                  log('WARN', `${catName}/#${chanName}: failed to delete message ${batch[0].id}: ${delErr.message}`);
+                  log('WARN', `${catName}/#${chanName}: failed to delete message ${msgBatch[0].id}: ${delErr.message}`);
                 }
               } else {
-                const result = await channel.bulkDelete(batch, true);
+                const result = await channel.bulkDelete(msgBatch, true);
                 deleted += result.size;
               }
             }
 
-            // (#1) Delete old messages individually (>14 days, can't bulk delete)
-            const maxOld = config.discord.maxOldDeletesPerChannel;
-            const oldToDelete = oldDeletable.slice(0, maxOld);
-            if (oldToDelete.length > 0) {
-              log('INFO', `  ${catName}/#${chanName}: removing ${oldToDelete.length} messages older than 14 days, one at a time (Discord limits this, so roughly ${formatDuration(oldToDelete.length * 3000)})...`);
+            // Individual delete (>14d): retention-old first, then rule-old.
+            if (oldToDeleteCombined.length > 0) {
+              log('INFO', `  ${catName}/#${chanName}: removing ${oldToDeleteCombined.length} messages older than 14 days, one at a time (Discord limits this, so roughly ${formatDuration(oldToDeleteCombined.length * 3000)})...`);
             }
             let oldDeletedCount = 0;
-            for (const msg of oldToDelete) {
+            for (const entry of oldToDeleteCombined) {
               if (cleanupCancelled) break;
+              const msg = entry.msg;
               try {
                 await msg.delete();
                 deleted++;
                 oldDeletedCount++;
-                // Progress update every 10 messages
-                if (oldDeletedCount % 10 === 0 && oldDeletedCount < oldToDelete.length) {
-                  log('INFO', `  ${catName}/#${chanName}: ${oldDeletedCount}/${oldToDelete.length} old messages deleted...`);
+                if (oldDeletedCount % 10 === 0 && oldDeletedCount < oldToDeleteCombined.length) {
+                  log('INFO', `  ${catName}/#${chanName}: ${oldDeletedCount}/${oldToDeleteCombined.length} old messages deleted...`);
                 }
               } catch (delErr) {
                 failedDeletes++;
@@ -1073,31 +1854,112 @@ async function runCleanup(options = {}) {
               }
               await sleep(config.discord.delayBetweenDeletes);
             }
-            if (oldDeletable.length > maxOld) {
-              log('WARN', `${catName}/#${chanName}: ${oldDeletable.length - maxOld} messages older than 14 days still waiting (PurgeBot removes up to ${maxOld} of these per run)`);
+            if (totalOldQueued > maxOld) {
+              log('WARN', `${catName}/#${chanName}: ${totalOldQueued - maxOld} messages older than 14 days still waiting (PurgeBot removes up to ${maxOld} of these per run)`);
             }
 
             const chanWaitMs = rateLimitTracker.totalMs - rlStart;
             const waitNote = chanWaitMs >= 1000 ? `, ${formatDuration(chanWaitMs)} of that waiting on Discord rate limits` : '';
-            log('INFO', `${catName}/#${chanName}: deleted ${deleted} messages in ${formatDuration(Date.now() - chanStart)}${waitNote} (retention=${retention}d)`);
+            const ruleNote = deletedByRule > 0 ? `, ${deletedByRule} matched a rule` : '';
+            log('INFO', `${catName}/#${chanName}: deleted ${deleted} messages${ruleNote} in ${formatDuration(Date.now() - chanStart)}${waitNote} (retention=${retentionLabel})`);
             totalPurged += deleted;
           }
 
-          // (N4) Report actual count in live mode, capped count in dry-run
-          const maxOldForCount = config.discord.maxOldDeletesPerChannel;
-          const cappedTotal = bulkDeletable.length + Math.min(oldDeletable.length, maxOldForCount);
+          const cappedTotal = bulkDeletable.length + Math.min(totalOldQueued, maxOld);
           const purgedCount = effectiveDryRun ? cappedTotal : deleted;
 
-          // Per-channel warnings, written in plain language for the
-          // dashboard + notifications so users don't need to read the log.
+          // Attribution rollup - per-entry source bucket.
+          const bulkByRule = bulkDeletable.filter(e => e.reason.kind === 'rule').length;
+          const bulkByRetention = bulkDeletable.length - bulkByRule;
+          const oldByRuleQueued = oldRuleToDelete.length;
+          const oldByRetentionQueued = oldRetentionToDelete.length;
+          const oldByRuleWaiting = Math.max(0, oldByRule.length - oldRuleToDelete.length);
+          const oldByRetentionWaiting = Math.max(0, oldByRetention.length - oldRetentionToDelete.length);
+          const rollup = {
+            bulk: bulkDeletable.length,
+            old: oldToDeleteCombined.length,
+            oldWaiting: Math.max(0, totalOldQueued - maxOld),
+            byRule: bulkByRule + oldByRuleQueued,
+            byRetention: bulkByRetention + oldByRetentionQueued,
+            byRuleWaiting: oldByRuleWaiting,
+            byRetentionWaiting: oldByRetentionWaiting,
+          };
+
+          // Per-message attribution. Cap at MAX_ATTR_PER_CHAN per channel so
+          // the SSE payload + the run-history file stay bounded. UI surfaces
+          // "and X more" when truncated.
+          const MAX_ATTR_PER_CHAN = 200;
+          function snippetOf(msg) {
+            const text = extractMessageText(msg);
+            const oneLine = text.replace(/\s+/g, ' ').trim();
+            return oneLine.length > 80 ? oneLine.slice(0, 80) + '…' : oneLine;
+          }
+          function buildAttribution(entry, age) {
+            const a = {
+              id: entry.msg.id,
+              ts: entry.msg.createdAt?.toISOString?.() || new Date().toISOString(),
+              author: entry.msg.author?.tag || entry.msg.author?.username || entry.msg.author?.id || 'unknown',
+              snippet: snippetOf(entry.msg),
+              age, // 'bulk' (≤14d) or 'old' (>14d)
+            };
+            if (entry.reason.kind === 'rule') {
+              a.reason = 'rule';
+              a.ruleNote = entry.reason.rule.note || null;
+              a.ruleDescription = describeRule(entry.reason.rule);
+              a.matchedConditions = entry.reason.conditions.map(describeCondition);
+              a.tier = entry.reason.tier;
+            } else {
+              a.reason = 'retention';
+              a.retentionDays = entry.reason.retention;
+            }
+            return a;
+          }
+          const allEntries = [
+            ...bulkDeletable.map(e => ({ ...e, _age: 'bulk' })),
+            ...oldToDeleteCombined.map(e => ({ ...e, _age: 'old' })),
+          ];
+          const attribution = allEntries.slice(0, MAX_ATTR_PER_CHAN).map(e => buildAttribution(e, e._age));
+          const attributionTruncated = Math.max(0, allEntries.length - attribution.length);
+          // Old messages that exceed maxOld budget aren't shown individually
+          // (we never even fetched them past the slice cap), but we expose
+          // the breakdown so the UI can say "+12 old by rule still waiting".
+          const waiting = {
+            oldByRule: oldByRuleWaiting,
+            oldByRetention: oldByRetentionWaiting,
+          };
+
+          // Audit per channel - gives "what got deleted where" + the rollup.
+          // No per-message lines (they live in run-history; audit stays terse).
+          if (deleted > 0 || failedDeletes > 0 || effectiveDryRun) {
+            audit.record('discord.delete_batch', {
+              actor: { kind: 'bot' },
+              details: {
+                category: catName,
+                channel: chanName,
+                deleted,
+                deletedByRule,
+                failed: failedDeletes,
+                dryRun: effectiveDryRun,
+                retention: retentionLabel,
+                trigger,
+                rollup,
+              },
+            });
+          }
+
+          // Per-channel warnings in plain language so the dashboard and
+          // notifications stay readable without diving into the log.
           const warnings = [];
-          const oldRemaining = deleteOld ? Math.max(0, oldDeletable.length - maxOldForCount) : 0;
+          const oldRemaining = Math.max(0, totalOldQueued - maxOld);
           if (oldRemaining > 0) {
-            const runsLeft = Math.ceil(oldRemaining / maxOldForCount);
+            const runsLeft = Math.ceil(oldRemaining / maxOld);
             warnings.push(`${oldRemaining} message${oldRemaining !== 1 ? 's' : ''} older than 14 days ${oldRemaining !== 1 ? 'are' : 'is'} still waiting. Discord only lets PurgeBot remove a limited number of these each run, so this channel finishes over about ${runsLeft} more run${runsLeft !== 1 ? 's' : ''}.`);
           }
           if (failedDeletes > 0) {
             warnings.push(`PurgeBot couldn't remove ${failedDeletes} message${failedDeletes !== 1 ? 's' : ''} here, possibly because it's missing permission to manage messages in this channel.`);
+          }
+          if (ruleConflicts.length > 0) {
+            warnings.push(`${ruleConflicts.length} message${ruleConflicts.length !== 1 ? 's' : ''} matched both a keep rule and a delete rule. Keep won, so nothing was removed; review the rule list if that wasn't the intent.`);
           }
 
           channelResults.push({
@@ -1106,6 +1968,17 @@ async function runCleanup(options = {}) {
             rateLimitMs: rateLimitTracker.totalMs - rlStart,
             oldRemaining,
             warnings,
+            keptByRule,
+            deletedByRule,
+            ruleConflicts: ruleConflicts.length,
+            rollup,
+            attribution,
+            attributionTruncated,
+            waiting,
+            scannedCount: fetched,
+            scanLimit: maxMessages,
+            scanComplete,
+            oldestScannedAt: oldestScannedMsg?.createdAt?.toISOString?.() || null,
           });
         } catch (err) {
           log('ERROR', `${catName}/#${chanName}: ${err.message}`);
@@ -1135,10 +2008,19 @@ async function runCleanup(options = {}) {
       // Collect per-category stats
       const catPurged = channelResults.reduce((sum, ch) => sum + (ch.purged || 0), 0);
       const catErrors_count = channelResults.filter(ch => ch.error).length;
+      const catDeletedByRule = channelResults.reduce((sum, ch) => sum + (ch.deletedByRule || 0), 0);
+      const catKeptByRule = channelResults.reduce((sum, ch) => sum + (ch.keptByRule || 0), 0);
+      const catRuleConflicts = channelResults.reduce((sum, ch) => sum + (ch.ruleConflicts || 0), 0);
+      const catScanned = channelResults.reduce((sum, ch) => sum + (ch.scannedCount || 0), 0);
+      totalScanned += catScanned;
       categoryStats[catName] = {
         processed: channelResults.length,
         purged: catPurged,
         errors: catErrors_count,
+        deletedByRule: catDeletedByRule,
+        keptByRule: catKeptByRule,
+        ruleConflicts: catRuleConflicts,
+        scanned: catScanned,
         durationMs: Date.now() - catStart,
         channels: channelResults,
       };
@@ -1146,7 +2028,11 @@ async function runCleanup(options = {}) {
       // Send per-category webhook immediately (live runs only)
       const hasPurged = channelResults.some(ch => ch.purged > 0);
       if (!effectiveDryRun && (hasPurged || catErrors)) {
-        const embed = buildCategoryEmbed(catName, channelResults, catErrors, effectiveDryRun);
+        const embed = buildCategoryEmbed(catName, channelResults, catErrors, effectiveDryRun, {
+          ruleOnly: !!ruleOnly,
+          ruleDescription: ruleOnlyDescription,
+          ruleAction: ruleOnlyAction,
+        });
         await sendWebhook([embed]);
       }
 
@@ -1154,7 +2040,7 @@ async function runCleanup(options = {}) {
       const partialDuration = Date.now() - startTime;
       const partialRunStats = {
         timestamp: new Date().toISOString(),
-        totalProcessed, totalPurged, totalErrors,
+        totalProcessed, totalPurged, totalErrors, totalScanned,
         dryRun: effectiveDryRun, duration: partialDuration, trigger,
         cancelled: cleanupCancelled,
         categories: categoryStats,
@@ -1162,7 +2048,7 @@ async function runCleanup(options = {}) {
       persistStats(partialRunStats, { partial: true });
     }
 
-    // (#5) Summary log — correct count in both modes
+    // (#5) Summary log - correct count in both modes
     const cancelled = cleanupCancelled;
     const action = effectiveDryRun ? 'would delete' : 'deleted';
     log('INFO', `Cleanup ${cancelled ? 'cancelled' : 'complete'}: ${totalProcessed} channels processed, ${totalPurged} messages ${action}, ${totalSkipped} skipped, ${totalErrors} errors`);
@@ -1180,10 +2066,13 @@ async function runCleanup(options = {}) {
     const duration = Date.now() - startTime;
     const runStats = {
       timestamp: new Date().toISOString(),
-      totalProcessed, totalPurged, totalErrors,
+      totalProcessed, totalPurged, totalErrors, totalScanned,
       dryRun: effectiveDryRun, duration, trigger,
       cancelled,
       categories: categoryStats,
+      ruleOnly: ruleOnly || null,
+      ruleDescription: ruleOnlyDescription,
+      ruleAction: ruleOnlyAction,
     };
     persistStats(runStats);
 
@@ -1193,7 +2082,7 @@ async function runCleanup(options = {}) {
     // Post-cleanup tasks (scheduled runs only, not manual, not dry-run)
     if (!effectiveDryRun && trigger === 'schedule') {
 
-      // 1. Auto-sync — discover new/removed channels before sorting
+      // 1. Auto-sync - discover new/removed channels before sorting
       try {
         log('INFO', 'Post-cleanup sync: checking for channel changes...');
         await syncConfig({ exitOnError: false });
@@ -1201,7 +2090,7 @@ async function runCleanup(options = {}) {
         log('ERROR', `Post-cleanup sync failed: ${err.message}`);
       }
 
-      // 2. Webhook discovery — log server webhooks
+      // 2. Webhook discovery - log server webhooks
       if (config.webhookDiscoveryOnSchedule) {
         try {
           const whData = await fetchGuildWebhooks();
@@ -1211,7 +2100,7 @@ async function runCleanup(options = {}) {
         }
       }
 
-      // 3. Auto-sort — sort categories and channels
+      // 3. Auto-sort - sort categories and channels
       if (config.sortEnabled && config.sortAfterCleanup) {
         sortRunning = true;
         try {
@@ -1285,11 +2174,11 @@ async function syncConfig({ exitOnError = true } = {}) {
     const sortedChannels = [...channels].sort();
 
     if (!config.categories[catName]) {
-      // New category — add as disabled with channel list
+      // New category - add as disabled with channel list
       config.categories[catName] = { enabled: false, default: config.globalDefault, _channels: sortedChannels };
       changes++;
       changeDetails.push({ type: 'added', scope: 'category', category: catName, channels: sortedChannels });
-      log('INFO', `+ Category "${catName}" (DISABLED, default: ${config.globalDefault}d) — ${channels.length} channels: ${channels.join(', ')}`);
+      log('INFO', `+ Category "${catName}" (DISABLED, default: ${config.globalDefault}d) - ${channels.length} channels: ${channels.join(', ')}`);
     } else {
       const cat = config.categories[catName];
       const status = cat.enabled ? 'enabled' : 'DISABLED';
@@ -1354,7 +2243,7 @@ async function syncConfig({ exitOnError = true } = {}) {
         changes++;
       }
 
-      log('INFO', `  Category "${catName}" (${status}, default: ${cat.default ?? config.globalDefault}d) — ${channels.length} channels`);
+      log('INFO', `  Category "${catName}" (${status}, default: ${cat.default ?? config.globalDefault}d) - ${channels.length} channels`);
     }
   }
 
@@ -1365,7 +2254,7 @@ async function syncConfig({ exitOnError = true } = {}) {
       changeDetails.push({ type: 'removed', scope: 'category', category: catName, channels: removedChannels });
       delete config.categories[catName];
       changes++;
-      log('WARN', `Category "${catName}": not found on Discord — removed from config`);
+      log('WARN', `Category "${catName}": not found on Discord - removed from config`);
     }
   }
 
@@ -1378,7 +2267,7 @@ async function syncConfig({ exitOnError = true } = {}) {
     fixOwnership(CONFIG_PATH);
     log('INFO', `Config updated: ${changes} changes written to ${CONFIG_PATH}`);
   } else {
-    log('INFO', 'No changes — config is up to date');
+    log('INFO', 'No changes - config is up to date');
   }
 
   log('INFO', `Sync complete: ${discoveredMap.size} categories, ${textChannels.size} channels on Discord`);
@@ -1398,8 +2287,8 @@ function setupCron() {
   if (cronJob) { cronJob.stop(); cronJob = null; lastCronDesc = ''; }
 
   if (!config.scheduleEnabled) {
-    if (hadCron) log('INFO', 'Schedule disabled — previous schedule stopped');
-    else log('INFO', 'Schedule disabled — cleanup runs manually only');
+    if (hadCron) log('INFO', 'Schedule disabled - previous schedule stopped');
+    else log('INFO', 'Schedule disabled - cleanup runs manually only');
     return;
   }
 
@@ -1429,7 +2318,7 @@ client.once('clientReady', () => {
   log('INFO', `Logged in as ${client.user.tag}`);
   log('INFO', `Guild: ${GUILD_ID}`);
 
-  // Liveness heartbeat — written every 5 min (plus on startup and after
+  // Liveness heartbeat - written every 5 min (plus on startup and after
   // each cleanup run, see writeHeartbeat callers). The healthcheck in
   // Dockerfile rejects the container if this file stops being updated.
   // Earlier versions only wrote on startup + scheduled-run completion,
@@ -1479,11 +2368,30 @@ client.on('error', (err) => {
   log('ERROR', `Discord client error: ${err.message}`);
 });
 
+// Guild allowlist - leave any guild that isn't the configured GUILD_ID.
+// Self-defense if the bot token leaks and an attacker invites the bot to
+// a guild they control: without this, the bot stays silently and exposes
+// any code path that touches `client.guilds.cache.first()` (which we have
+// already audited away).
+client.on('guildCreate', async (guild) => {
+  if (guild.id === GUILD_ID) return;
+  log('WARN', `Bot added to unexpected guild "${guild.name}" (${guild.id}) - leaving immediately`);
+  audit.record('discord.guild_allowlist_violation', {
+    actor: { kind: 'bot' },
+    details: { guildId: guild.id, guildName: guild.name, allowed: GUILD_ID },
+  });
+  try {
+    await guild.leave();
+  } catch (err) {
+    log('ERROR', `Failed to leave unexpected guild ${guild.id}: ${err.message}`);
+  }
+});
+
 // --- Webhook Discovery ---
 
 async function fetchGuildWebhooks() {
   const guild = client.guilds.cache.get(GUILD_ID);
-  if (!guild) throw new Error('Guild not available — bot may still be connecting');
+  if (!guild) throw new Error('Guild not available - bot may still be connecting');
 
   const webhooks = await guild.fetchWebhooks();
 
@@ -1545,17 +2453,17 @@ async function fetchGuildWebhooks() {
 
 async function purgeAllChannel(categoryName, channelName, channelId) {
   const guild = client.guilds.cache.get(GUILD_ID);
-  if (!guild) throw new Error('Guild not available — bot may still be connecting');
+  if (!guild) throw new Error('Guild not available - bot may still be connecting');
 
   await guild.channels.fetch();
 
   let channel;
   if (channelId) {
-    // Resolve by ID — safe, unambiguous
+    // Resolve by ID - safe, unambiguous
     channel = guild.channels.cache.get(channelId);
     if (!channel || channel.type !== ChannelType.GuildText) throw new Error(`Channel with ID ${channelId} not found or not a text channel`);
   } else {
-    // Fallback: resolve by name — reject if ambiguous
+    // Fallback: resolve by name - reject if ambiguous
     const category = guild.channels.cache.find(
       c => c.type === ChannelType.GuildCategory && c.name === categoryName
     );
@@ -1564,7 +2472,7 @@ async function purgeAllChannel(categoryName, channelName, channelId) {
       c => c.type === ChannelType.GuildText && c.parentId === category.id && c.name === channelName
     );
     if (matches.size === 0) throw new Error(`Channel "#${channelName}" not found in "${categoryName}"`);
-    if (matches.size > 1) throw new Error(`Multiple channels named "#${channelName}" — use the channel picker to select which one.`);
+    if (matches.size > 1) throw new Error(`Multiple channels named "#${channelName}" - use the channel picker to select which one.`);
     channel = matches.first();
   }
 
@@ -1586,14 +2494,14 @@ async function purgeAllChannel(categoryName, channelName, channelId) {
     })),
   };
 
-  // Snapshot webhooks (name only — URLs change on recreate)
+  // Snapshot webhooks (name only - URLs change on recreate)
   const channelWebhooks = await channel.fetchWebhooks();
   const webhookSnapshots = channelWebhooks
-    .filter(wh => wh.type === 1) // Only Incoming webhooks — Channel Follower and Application can't be recreated
+    .filter(wh => wh.type === 1) // Only Incoming webhooks - Channel Follower and Application can't be recreated
     .map(wh => ({ name: wh.name }));
   snapshot.webhooks = webhookSnapshots;
 
-  // Persist snapshot to /config before deleting — recovery safety net
+  // Persist snapshot to /config before deleting - recovery safety net
   const recoveryDir = path.join(path.dirname(CONFIG_PATH), 'recovery');
   if (!fs.existsSync(recoveryDir)) fs.mkdirSync(recoveryDir, { recursive: true });
   const safeName = channel.name.replace(/[^\w-]/g, '_');
@@ -1604,10 +2512,10 @@ async function purgeAllChannel(categoryName, channelName, channelId) {
 
   log('INFO', `Purge All: deleting #${snapshot.name} in "${categoryName}" (${channelWebhooks.size} webhooks, ${snapshot.permissionOverwrites.length} permission overwrites)`);
 
-  // Delete the channel — point of no return
-  await channel.delete(`PurgeBot Purge All — recreating #${snapshot.name}`);
+  // Delete the channel - point of no return
+  await channel.delete(`PurgeBot Purge All - recreating #${snapshot.name}`);
 
-  // Recreate with identical settings (retry up to 3 times — if this fails the channel is gone)
+  // Recreate with identical settings (retry up to 3 times - if this fails the channel is gone)
   const createOpts = {
     name: snapshot.name,
     type: ChannelType.GuildText,
@@ -1622,7 +2530,7 @@ async function purgeAllChannel(categoryName, channelName, channelId) {
       allow: new PermissionsBitField(BigInt(po.allow)),
       deny: new PermissionsBitField(BigInt(po.deny)),
     })),
-    reason: `PurgeBot Purge All — recreated #${snapshot.name}`,
+    reason: `PurgeBot Purge All - recreated #${snapshot.name}`,
   };
   let newChannel;
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -1632,8 +2540,8 @@ async function purgeAllChannel(categoryName, channelName, channelId) {
     } catch (createErr) {
       log('ERROR', `Purge All: create attempt ${attempt}/3 failed: ${createErr.message}`);
       if (attempt === 3) {
-        log('ERROR', `Purge All: CHANNEL LOST — failed to recreate #${snapshot.name}. Recovery file: ${recoveryPath}`);
-        throw new Error(`Channel deleted but recreation failed after 3 attempts: ${createErr.message}. Recovery file saved — use Recover in Settings to restore.`);
+        log('ERROR', `Purge All: CHANNEL LOST - failed to recreate #${snapshot.name}. Recovery file: ${recoveryPath}`);
+        throw new Error(`Channel deleted but recreation failed after 3 attempts: ${createErr.message}. Recovery file saved - use Recover in Settings to restore.`);
       }
       await sleep(1000 * attempt);
     }
@@ -1644,7 +2552,7 @@ async function purgeAllChannel(categoryName, channelName, channelId) {
   const failedWebhooks = [];
   for (const ws of webhookSnapshots) {
     try {
-      const wh = await newChannel.createWebhook({ name: ws.name, reason: 'PurgeBot Purge All — recreated webhook' });
+      const wh = await newChannel.createWebhook({ name: ws.name, reason: 'PurgeBot Purge All - recreated webhook' });
       newWebhooks.push({ name: wh.name, url: wh.url });
     } catch (err) {
       log('WARN', `Purge All: failed to recreate webhook "${ws.name}": ${err.message}`);
@@ -1656,10 +2564,22 @@ async function purgeAllChannel(categoryName, channelName, channelId) {
   if (failedWebhooks.length === 0) {
     try { fs.unlinkSync(recoveryPath); } catch {}
   } else {
-    log('WARN', `Purge All: ${failedWebhooks.length} webhook(s) failed — recovery file kept: ${recoveryPath}`);
+    log('WARN', `Purge All: ${failedWebhooks.length} webhook(s) failed - recovery file kept: ${recoveryPath}`);
   }
 
   log('INFO', `Purge All: recreated #${newChannel.name} (id: ${newChannel.id}) with ${newWebhooks.length} webhook(s), ${failedWebhooks.length} failed`);
+  audit.record('discord.purge_all_recreate', {
+    actor: { kind: 'bot' },
+    details: {
+      category: categoryName,
+      oldChannelId: snapshot.id,
+      newChannelId: newChannel.id,
+      channelName: snapshot.name,
+      webhooks: newWebhooks.length,
+      webhooksFailed: failedWebhooks.length,
+      recoveryFile: path.basename(recoveryPath),
+    },
+  });
 
   return {
     channelName: newChannel.name,
@@ -1718,7 +2638,7 @@ async function recoverChannel(filename) {
   const existing = guild.channels.cache.find(
     c => c.type === ChannelType.GuildText && c.parentId === snapshot.parentId && c.name === snapshot.name
   );
-  if (existing) throw new Error(`Channel #${snapshot.name} already exists in this category — it may have been recovered already.`);
+  if (existing) throw new Error(`Channel #${snapshot.name} already exists in this category - it may have been recovered already.`);
 
   const newChannel = await guild.channels.create({
     name: snapshot.name,
@@ -1734,13 +2654,13 @@ async function recoverChannel(filename) {
       allow: new PermissionsBitField(BigInt(po.allow)),
       deny: new PermissionsBitField(BigInt(po.deny)),
     })),
-    reason: `PurgeBot Purge All — recovered #${snapshot.name} from snapshot`,
+    reason: `PurgeBot Purge All - recovered #${snapshot.name} from snapshot`,
   });
 
   const newWebhooks = [];
   for (const ws of (snapshot.webhooks || [])) {
     try {
-      const wh = await newChannel.createWebhook({ name: ws.name, reason: 'PurgeBot Purge All — recovered webhook' });
+      const wh = await newChannel.createWebhook({ name: ws.name, reason: 'PurgeBot Purge All - recovered webhook' });
       newWebhooks.push({ name: wh.name, url: wh.url });
     } catch (err) {
       newWebhooks.push({ name: ws.name, url: null, error: err.message });
@@ -1752,7 +2672,7 @@ async function recoverChannel(filename) {
   if (failedWh.length === 0) {
     try { fs.unlinkSync(filePath); } catch {}
   } else {
-    log('WARN', `Purge All recovery: ${failedWh.length} webhook(s) failed — keeping recovery file: ${filePath}`);
+    log('WARN', `Purge All recovery: ${failedWh.length} webhook(s) failed - keeping recovery file: ${filePath}`);
   }
   log('INFO', `Purge All: recovered #${newChannel.name} (id: ${newChannel.id}) from ${filename}`);
 
@@ -1774,8 +2694,8 @@ function cancelCleanup() {
 // --- Channel/Category Sorting ---
 
 async function sortServer({ mode = 'both', dryRun = false, skipChannelsInCategories = [], includeVoice = false, pinnedPositions = {} } = {}) {
-  const guild = client.guilds.cache.first();
-  if (!guild) throw new Error('Not connected to a guild');
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (!guild) throw new Error(`Guild ${GUILD_ID} not found`);
   await guild.channels.fetch();
 
   const results = { categories: [], channels: [], totalMoves: 0 };
@@ -1783,7 +2703,7 @@ async function sortServer({ mode = 'both', dryRun = false, skipChannelsInCategor
   // NOT category reordering (which always sorts all categories alphabetically).
   const skipSet = new Set(skipChannelsInCategories);
 
-  // Sort categories — pinned categories go to their designated position,
+  // Sort categories - pinned categories go to their designated position,
   // remaining categories sorted alphabetically around them.
   if (mode === 'categories' || mode === 'both') {
     // Optionally exclude voice-only categories (no text channels)
@@ -1815,7 +2735,7 @@ async function sortServer({ mode = 'both', dryRun = false, skipChannelsInCategor
     const lastPinned = pinned.filter(p => p.pos === -1);
     const fixedPinned = pinned.filter(p => p.pos >= 0).sort((a, b) => a.pos - b.pos);
 
-    // Place fixed-position pins — find nearest open slot on conflict
+    // Place fixed-position pins - find nearest open slot on conflict
     const findSlot = (start, dir = 1) => {
       for (let j = start; j >= 0 && j < total; j += dir) {
         if (!sorted[j]) return j;
@@ -1916,6 +2836,16 @@ async function sortServer({ mode = 'both', dryRun = false, skipChannelsInCategor
 
   const action = dryRun ? 'would move' : 'moved';
   log('INFO', `Sort ${dryRun ? 'dry-run' : 'complete'}: ${results.totalMoves} ${action} (mode: ${mode})`);
+  audit.record('discord.sort_run', {
+    actor: { kind: 'bot' },
+    details: {
+      mode,
+      dryRun,
+      totalMoves: results.totalMoves,
+      categoryMoves: results.categories.length,
+      channelGroups: results.channels.length,
+    },
+  });
   return results;
 }
 
@@ -1925,11 +2855,13 @@ module.exports = {
   isCleanupRunning, isCleanupCancelling, getCleanupStartTime, cancelCleanup, writeHeartbeat, getConfiguredChannels,
   getRetention, getRetentionSource, formatRetention, fetchGuildWebhooks, purgeAllChannel, listRecoveryFiles, recoverChannel, resolveChannels,
   sortServer, isSortRunning: () => sortRunning, checkPermissions,
+  isAllowedDiscordWebhookUrl, isAllowedGotifyUrl,
+  CRED_MASK, maskCredential, resolveMaskedCredential, maskedConfigSnapshot,
 };
 
 function checkPermissions() {
-  const guild = client.guilds.cache.first();
-  if (!guild) throw new Error('Not connected to a guild');
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (!guild) throw new Error(`Guild ${GUILD_ID} not found`);
   const me = guild.members.me;
   if (!me) throw new Error('Bot member not available');
 
@@ -1961,6 +2893,16 @@ function checkPermissions() {
 
 loadConfig();
 rotateLogs(config.logging.maxDays);
+
+// Audit log lives next to the runtime log + carries the same UID/GID so
+// the user can read both with the same permissions. Rotate at startup so
+// the file count stays bounded across container restarts.
+audit.configure({
+  logDir: LOG_DIR,
+  fixOwnership,
+  onError: (msg) => log('WARN', msg),
+});
+audit.rotate(config.logging.maxDays);
 
 // Start UI server (available before Discord login)
 if (!process.argv.includes('--sync') && !process.argv.includes('--now')) {
