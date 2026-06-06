@@ -9,7 +9,7 @@
   </Branch>
   <Branch>
     <Tag>dev</Tag>
-    <TagDescription>Development builds - may contain bugs or breaking changes</TagDescription>
+    <TagDescription>Development builds, may contain bugs or breaking changes</TagDescription>
   </Branch>
   <Network>bridge</Network>
   <Shell>sh</Shell>
@@ -21,6 +21,14 @@
   <WebUI>http://[IP]:[PORT:3050]</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/prophetse7en/unraid-templates/main/purgebot.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/prophetse7en/purgebot/main/icon.png</Icon>
+  <Date>2026-06-06</Date>
+  <Changes>
+### 2026-06-06
+- v1.5.0: Web UI gets a login layer with LAN bypass on by default, an audit log of security-relevant events as JSON lines, and an API key for Homepage widgets and other headless clients. Rules now show which rule and which condition caused each delete, and each rule has a Run button so you can try one out without waiting for the schedule. Compiled stylesheet replaces the runtime Tailwind so the production-warning is gone. Existing installs keep working with no configuration changes. To opt into login, visit /setup and create an admin account.
+- v1.4.0: Cleanup runs now show per-channel and per-category time, plain-language warnings explaining why a channel is slow or stuck, and a "waiting on Discord" line so you can tell when the rate limit on removing messages older than 14 days is the actual bottleneck.
+
+[Full changelog](https://github.com/ProphetSe7en/purgebot/blob/main/CHANGELOG.md)
+  </Changes>
   <ExtraParams/>
   <PostArgs/>
   <DonateText/>

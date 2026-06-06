@@ -1,49 +1,81 @@
 # Changelog
 
-## v1.5.0-dev
+## v1.5.0
 
-Web UI gets a real auth layer, an audit log, an API key for headless clients, and a thorough rule UX overhaul that makes it obvious why each message was (or was not) deleted. Internally the bot also stopped trusting the wrong guild and started validating outbound webhook URLs on every send. None of this changes how cleanup runs work in practice. Existing installs keep working without configuration changes.
+Web UI gets a login layer, an audit log, and an API key for headless clients. Rules now show you exactly which rule and which condition caused each delete, with a Run button per rule for one-off runs without changing the schedule. Existing installs keep working with no configuration changes.
 
-### Added
+### Highlights
 
-- **Per-message attribution in cleanup results.** Every deleted message now shows up under "Show details" with timestamp, snippet, and the reason it was deleted: which rule + which condition matched, or "retention: >7d" for age-based. Per-channel rollup says "5 by rule, 2 by retention, +12 waiting" so the count is interpretable without diving into the log.
-- **Scan-window context per channel.** Each channel result shows how many messages were actually scanned and how far back, with a hint to bump "Max Messages Per Channel" if the window wasn't exhausted. "0 to delete" stops being ambiguous - you see whether the bot looked at the whole channel or stopped at the limit.
-- **Run-one-rule from the Web UI.** Each rule card gets a Run button next to Edit and Remove. Opens a modal showing the rule + scope with Dry run and Run live buttons. The run isolates that one rule: retention is treated as "never" and other rules are skipped, so the result is purely what that rule catches.
-- **Rule "word" matching now respects word boundaries.** Typing `test` matches the word "test" but not "Testaments", "Greatest", or "latest". Old behaviour was substring match. Falls back to substring for values with non-ASCII letters (Norwegian diacritics) or non-word edges, where `\b` boundary semantics don't work.
-- **URL routing.** Tabs and Settings sub-tabs are now reflected in the URL as `#cleanup`, `#settings/security`, etc. Browser back/forward, bookmarks, and "Open in new tab" all work. Middle-click / Ctrl+click / right-click on a tab opens that page in a new browser tab. Direct links can be shared.
-- **Unsaved-changes warning.** The browser's native "Leave site?" dialog now appears when you try to close the tab, refresh, or navigate away with pending config changes.
-- **Auto-save on rule add/edit/remove.** No more "save the rule, then save the config" two-step - rule CRUD persists immediately.
-- **Discord notification breakdown.** Per-category cleanup embeds now report `5 purged (3 by rule, 2 by retention) - scanned 5,000 (whole channel)` per channel. Rule-only runs lead with the rule that fired. Run summary adds total scanned + total rule vs retention split.
-- **Web UI login.** First-run setup forces you to create an admin account. Once set, login is required from outside the LAN by default, and friction-free from inside the LAN. Sessions survive container restarts. Passwords use bcrypt, 16+ character passphrases skip the class-mix rule. Brute-force protection on /login: 5 attempts then 1 per minute, with `Retry-After` headers.
-- **Settings, Security tab.** Shows your current auth posture (LAN bypass mode, signed-in account), the API key with Show/Hide/Copy/Rotate, and a Change password button. Rotating the key or changing your password requires the current password.
-- **Audit log.** `/config/logs/audit-YYYY-MM-DD.log` records security-relevant events as JSON lines: login attempts (success + failure with source IP), logout, setup, password changes, API key rotations, rate-limit hits, config writes (with the top-level field names, never values), webhook test sends (host prefix only, never the token), manual cleanup triggers, per-channel Discord deletes, sort moves, Purge All channel recreations, and guild-allowlist violations. File mode 0600. Rotates with the same `logging.maxDays` setting as the runtime log. Use `jq` for forensic queries.
-- **API key for headless clients.** Each install gets a 32-byte key shown in Settings, Security. Send as `X-API-Key: <key>` header (or `?apiKey=<key>` query string) to bypass session auth for Homepage widgets, scripts, and other automation.
-- **Trusted networks + reverse proxy support.** New env vars `AUTH_REQUIRED`, `TRUSTED_NETWORKS`, `TRUSTED_PROXIES`. Defaults match Radarr/Sonarr (LAN bypass enabled, loopback + RFC1918 + link-local + ULA trusted). Setting an env var locks the value from UI edits so a session-hijack attacker cannot widen the trust boundary without host access.
-- **CSRF protection on every state-changing request.** Per-session token sent via `X-CSRF-Token` for authenticated sessions, cookie double-submit for login + setup. Constant-time compare.
-- **Credential masking on /api/config.** Webhook URLs and the Gotify token never leave the server in plaintext. The UI shows "Saved (hidden), type to replace" placeholders with an explicit Remove button.
-- **UI Scale.** Settings, Display: Compact (1.0), Default (1.1), Large (1.2). Per-browser preference, persists across reloads, applies before the page paints to avoid resize flash.
-- **Display sub-tab in Settings.** Groups UI Scale, Time Format, and the placeholder for theme switching (light theme arrives in a later release). General now carries log retention only.
+- Web UI login, with LAN bypass on by default so home users see no friction.
+- API key for Homepage widgets and other headless integrations.
+- Audit log records security-relevant events as JSON lines, ready for `jq`.
+- Per-message attribution in cleanup results so you can see why each message was deleted.
+- Run a single rule on demand without waiting for the next scheduled cleanup.
+- URL routing: every tab and Settings page is bookmarkable and opens in a new tab.
+
+### New
+
+#### Web UI auth and audit
+
+**Web UI login.** First-run setup forces you to create an admin account. Once set, login is required from outside the LAN by default and friction-free from inside the LAN. Sessions survive container restarts. Passwords use bcrypt with a 16+ character passphrase exception to the class-mix rule. Brute-force protection: 5 login attempts per IP then 1 per minute, with `Retry-After` headers so honest retries know when to come back.
+
+**Settings, Security tab.** Shows your current auth posture (LAN bypass mode, signed-in account), the API key with Show, Hide, Copy, and Rotate, and a Change password button. Rotating the key or changing your password requires the current password.
+
+**API key for headless clients.** Each install gets a 32-byte key shown under Settings, Security. Send it as `X-API-Key: <key>` header (or `?apiKey=<key>` query string) to bypass session auth for Homepage widgets, scripts, and other automation. Rotate without restarting the container.
+
+**Trusted networks and reverse proxy support.** New env vars `AUTH_REQUIRED`, `TRUSTED_NETWORKS`, and `TRUSTED_PROXIES`. Defaults match Radarr and Sonarr: LAN bypass on by default with loopback, RFC 1918, link-local, and ULA ranges trusted. Setting any of these via env locks the value from UI edits so a session-hijack attacker cannot widen the trust boundary without host access.
+
+**Audit log.** `/config/logs/audit-YYYY-MM-DD.log` records security-relevant events as JSON lines: login attempts (success and failure with source IP), logout, setup, password changes, API key rotations, rate-limit hits, config writes (top-level field names only, never values), webhook test sends (host prefix only, never the token), manual cleanup triggers, per-channel Discord deletes, sort moves, Purge All channel recreations, and guild-allowlist violations. File mode 0600. Rotates with the same `logging.maxDays` setting as the runtime log. Use `jq` for forensic queries.
+
+**CSRF on every state-changing request.** Per-session token sent via `X-CSRF-Token` for authenticated sessions, cookie double-submit for login and setup. Constant-time compare.
+
+**Credential masking on `/api/config`.** Webhook URLs and the Gotify token never leave the server in plaintext. The UI shows "Saved (hidden), type to replace" placeholders with an explicit Remove button if you actually want to clear the field.
+
+#### Rules: see what fired and why
+
+**Per-message attribution in cleanup results.** Every deleted message now shows up under Show details with a timestamp, snippet, and the reason it was deleted: which rule plus which condition matched, or "retention: >7d" for age-based. Per-channel rollup says "5 by rule, 2 by retention, +12 waiting" so the count is interpretable without opening the log.
+
+**Scan-window context per channel.** Each channel result shows how many messages were actually scanned and how far back, with a hint to raise Max Messages Per Channel if the window was not exhausted. "0 to delete" stops being ambiguous: you can see whether the bot looked at the whole channel or stopped at the limit.
+
+**Run one rule on demand.** Each rule card gets a Run button next to Edit and Remove. Opens a modal with Dry run and Run live buttons. The run isolates that one rule: retention is treated as "never" and other rules are skipped, so the result is purely what that rule catches. Good for "does this rule still do what I think it does" without waiting for the schedule.
+
+**Word matching now respects word boundaries.** Typing `test` matches the word "test" but not "Testaments", "Greatest", or "latest". Old behaviour was substring match. Falls back to substring for values with non-ASCII letters (e.g. Norwegian diacritics) or non-word edges, where word-boundary semantics do not work cleanly.
+
+**Discord notification breakdown.** Per-category cleanup embeds now report `5 purged (3 by rule, 2 by retention), scanned 5,000 (whole channel)` per channel. Rule-only runs lead with the rule that fired. Run summary adds total scanned plus the rule vs retention split.
+
+#### UI polish
+
+**URL routing.** Tabs and Settings sub-tabs are now reflected in the URL as `#cleanup`, `#settings/security`, etc. Browser back and forward work, bookmarks work, and middle-click, Ctrl+click, or right-click "Open in new tab" all open that page in a new browser tab. Direct links can be shared with other admins.
+
+**Unsaved-changes warning.** The browser's native "Leave site?" dialog now appears when you try to close the tab, refresh, or navigate away with pending config changes.
+
+**Auto-save on rule add, edit, and remove.** No more "save the rule, then save the config" two-step. Rule CRUD persists immediately.
+
+**UI Scale.** Under Settings, Display: Compact (1.0), Default (1.1), Large (1.2). Per-browser preference, persists across reloads, applies before the page paints to avoid a resize flash on load.
+
+**Display sub-tab in Settings.** Groups UI Scale, Time Format, and the placeholder for theme switching (light theme arrives in a later release). General now carries log retention only.
 
 ### Changed
 
-- **Compiled stylesheet.** The Web UI switched from the Tailwind runtime JIT compiler to a build-time compiled stylesheet. The "cdn.tailwindcss.com should not be used in production" console warning is gone, the CSS bundle dropped from ~350KB to 21KB, and dark/light color values now live in `tokens.css` as CSS variables so the future light theme can drop in without rewriting markup.
+**Compiled stylesheet.** The Web UI switched from the Tailwind runtime JIT compiler to a build-time compiled stylesheet. The "cdn.tailwindcss.com should not be used in production" console warning is gone, the CSS bundle dropped from around 350KB to 21KB, and color values now live in `tokens.css` as CSS variables so the future light theme can drop in without rewriting markup.
 
 ### Fixed
 
-- **Sort Server bug: would have scrambled the wrong guild if the bot were a member of more than one.** `sortServer` and the permission checker used the first guild in the bot's cache instead of the configured `GUILD_ID`. Both now scope explicitly to `GUILD_ID`.
-- **"Delete old (>14d)" no longer silently blocks rule-matched messages older than 14 days.** Previously a rule that wanted to delete a >14-day message was silently dropped when the category had Delete old off. The toggle now only gates retention-based (age) cleanup. Rules always run regardless. Tooltip text updated.
-- **Rule editor dropdown was always reverting to "Word" when editing an existing rule.** The condition-type select had an Alpine x-model + x-for-options race that landed on the first option whenever the modal opened. Now uses per-option `:selected`, so the saved type stays selected on edit.
-- **Overview "Sort 37/29" badge inflated by stale entries.** `sortInclude` (and `sortPinned` / `sortSkip`) kept entries for categories that no longer existed in config, often because the user switched Discord server. `loadConfig` now prunes them on read so the badge count matches reality.
+**Sort Server now uses the configured guild.** Previously `sortServer` and the permission check used the first guild in the bot's cache instead of the configured `GUILD_ID`. If the bot was ever a member of more than one server, sort could have scrambled the wrong one. Both now scope explicitly to `GUILD_ID`.
+
+**"Delete old (>14d)" no longer silently blocks rule-matched messages older than 14 days.** Previously a rule that wanted to delete a >14-day message was silently dropped when the category had Delete old off. The toggle now only gates retention-based (age) cleanup. Rules always run regardless. Tooltip text updated.
+
+**Rule editor dropdown stays on the saved type when editing.** Previously the condition-type dropdown always reverted to "Word" the moment you opened the modal on an existing rule. It now keeps whatever type the rule was saved with.
+
+**Overview "Sort 37/29" badge matches reality.** `sortInclude`, `sortPinned`, and `sortSkip` used to keep entries for categories that no longer existed in config, often because the user had switched Discord server. Stale entries are now pruned on read so the badge count matches what is actually there.
 
 ### Security
 
-- **Bot leaves any guild outside `GUILD_ID` immediately.** Self-defense against a leaked bot token: a `guildCreate` listener now logs a WARN and exits any unexpected guild as soon as it arrives.
-- **Outbound webhook host validation on every send.** Production cleanup summary, info webhook, and Gotify pushes now validate the URL host before sending, not just at test time. A tampered config cannot redirect cleanup data to an arbitrary host.
-- **Bot token isolation verified.** `DISCORD_TOKEN` is read from env, never written to config.yaml or returned by any API endpoint.
-- **No privileged Discord intents required.** README updated to clarify that `MessageContent` intent stays off (message bodies are read via REST under Read Message History, not via gateway events).
-- **Defensive infra on the GitHub side.** Weekly grouped Dependabot PRs for npm + GitHub Actions + Docker base image bumps. Auto-merge policy for patch bumps after CI passes. CI now runs `node -c` syntax check + `npm audit --audit-level=high --omit=dev` on every push and PR. SHA-pinned third-party actions. Subresource Integrity hashes on every vendored CDN script (Alpine.js, Alpine collapse plugin, cronstrue, Chart.js). SECURITY.md added with private vulnerability reporting policy.
+**Bot leaves any guild outside `GUILD_ID` immediately.** Self-defense against a leaked bot token: a `guildCreate` listener now logs a WARN and exits any unexpected guild as soon as it arrives.
 
-### Upgrade notes
+**Outbound webhook host validation on every send.** Production cleanup summary, info webhook, and Gotify pushes now validate the URL host before sending, not just at test time. A tampered config cannot redirect cleanup data to an arbitrary host.
+
+### Upgrade
 
 - Default behaviour for existing users: nothing changes. LAN bypass keeps the UI friction-free on your home network.
 - To opt into login: visit `/setup` and create an admin account. Once set, external visitors must log in.
