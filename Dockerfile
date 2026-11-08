@@ -1,4 +1,4 @@
-FROM node:22-alpine
+FROM node:26-alpine
 
 ARG VERSION=dev
 
@@ -14,16 +14,25 @@ RUN npm ci --omit=dev
 # the browser never loads the runtime JIT compiler. Closes the
 # "cdn.tailwindcss.com should not be used in production" console warning.
 RUN apk add --no-cache --virtual .build-deps curl && \
-    curl -sSL -o /usr/local/bin/tailwindcss \
+    curl -fsSL --retry 3 -o /usr/local/bin/tailwindcss \
       "https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.17/tailwindcss-linux-x64" && \
+    echo "7d24f7fa191d2193b78cd5f5a42a6093e14409521908529f42d80b11fde1f1d4  /usr/local/bin/tailwindcss" | sha256sum -c - && \
     chmod +x /usr/local/bin/tailwindcss
 
 # Bundle remaining frontend CDN dependencies (offline support, version-pinned).
-RUN mkdir -p src/ui/public/vendor && \
-    wget -q -O src/ui/public/vendor/alpine-collapse.js "https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.14.9/dist/cdn.min.js" && \
-    wget -q -O src/ui/public/vendor/alpine.js "https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js" && \
-    wget -q -O src/ui/public/vendor/cronstrue.js "https://cdn.jsdelivr.net/npm/cronstrue@2.50.0/dist/cronstrue.min.js" && \
-    wget -q -O src/ui/public/vendor/chart.js "https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"
+# Each checksum matches the same file inside the package's npm tarball, so a
+# tampered CDN copy fails the build instead of shipping.
+RUN mkdir -p src/ui/public/vendor && cd src/ui/public/vendor && \
+    wget -q -O alpine-collapse.js "https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.14.9/dist/cdn.min.js" && \
+    wget -q -O alpine.js "https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js" && \
+    wget -q -O cronstrue.js "https://cdn.jsdelivr.net/npm/cronstrue@2.50.0/dist/cronstrue.min.js" && \
+    wget -q -O chart.js "https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.js" && \
+    printf '%s\n' \
+      "c7661d4e2cf0465e3cd693190debb5f592ac72dcc4cfe650581273767558b27b  alpine-collapse.js" \
+      "3ed1eed252488921df65e363d6715deb04d7f92aaedb9e52199fdf73cb1e0ad3  alpine.js" \
+      "970ae0daaa81c0e9bfcfb912f5d18b8f38066275c8133f447e0f79ecfb1d3a7e  cronstrue.js" \
+      "e4cf4d144b222634f2e64ff707cd57b953f8de4b65b231cd5ac6bde114648e4d  chart.js" \
+    | sha256sum -c -
 
 COPY tailwind.config.js ./
 COPY src/ ./src/

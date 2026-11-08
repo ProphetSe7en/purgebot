@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.5.1
+
+Security maintenance. No behavior changes.
+
+### Changed
+
+- **Runs on Node.js 26**, the current long-term support release, instead of Node.js 22.
+- **Updated dependencies.** discord.js and its HTTP client, express, body-parser, qs and js-yaml are updated to releases that fix known security issues.
+- **Verified downloads.** The Tailwind build tool and the bundled frontend libraries (Alpine.js, cronstrue, Chart.js) are checked against fixed checksums during the build, and a failed download now stops the build instead of being used.
+
 ## v1.5.0
 
 Web UI gets a login layer, an audit log, and an API key for headless clients. Rules now show you exactly which rule and which condition caused each delete, with a Run button per rule for one-off runs without changing the schedule. Existing installs keep working with no configuration changes.

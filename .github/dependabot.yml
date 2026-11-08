@@ -7,6 +7,8 @@ updates:
   # one PR, not five.
   - package-ecosystem: npm
     directory: /
+    cooldown:
+      default-days: 7
     schedule:
       interval: weekly
       day: monday
@@ -29,6 +31,8 @@ updates:
   # floating major tag to silently update. Grouped into one PR per week.
   - package-ecosystem: github-actions
     directory: /
+    cooldown:
+      default-days: 7
     schedule:
       interval: weekly
       day: monday
@@ -50,6 +54,8 @@ updates:
   # Grouped into one PR per week.
   - package-ecosystem: docker
     directory: /
+    cooldown:
+      default-days: 7
     schedule:
       interval: weekly
       day: monday
